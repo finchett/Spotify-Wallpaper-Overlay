@@ -1,0 +1,652 @@
+import AppKit
+import AVFoundation
+import Darwin
+
+/// The layered view that fills a screen. The layout is identical either way — vibrant
+/// gradient background, a centered rounded card, title/artist bottom-left — the only
+/// difference is what fills the card:
+///   • Canvas mode  — the looping Canvas video.
+///   • Cover mode   — the static cover with a slow Ken Burns zoom.
+/// Both are topped with the black menu-bar bar and black rounded corners.
+final class OverlayContentView: NSView {
+    // Overlay geometry, in device pixels (see [[wallpaper-black-overlays]]).
+    private static let menuBarHeightPixels: CGFloat = {
+        guard let chip = sysctlString("machdep.cpu.brand_string") else {
+            return 64
+        }
+        return chip.range(
+            of: #"\bApple M1(?:\s|$)"#,
+            options: .regularExpression) == nil ? 64 : 74
+    }()
+    private let cornerRadiusPixels: CGFloat = 44
+
+    /// Holds all the now-playing content (gradient, card, text) so it can be revealed or
+    /// hidden as a group — leaving the black bar + corners always visible on top.
+    private let contentLayer = CALayer()
+    private let gradientLayer = CAGradientLayer()
+    private let cardShadowLayer = CALayer()
+    private let cardLayer = CALayer()
+    private let playerLayer = AVPlayerLayer()
+    private let titleLayer = CATextLayer()
+    private let artistLayer = CATextLayer()
+    private let barLayer = CALayer()
+    private let cornerLayer = CAShapeLayer()
+
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+
+    /// Card aspect ratio (width / height): 1 for the square cover, the video's ratio for Canvas.
+    private var cardAspect: CGFloat = 1.0
+
+    /// The track currently shown, so we only play the reveal animation on a genuinely new one.
+    private var shownTrackID: String?
+    private var hideWhenIdle = false
+    private var hideFrameWhenIdle = false
+    private var useVibrantColors = false
+    private var isIdle = true
+    private var visibilityGeneration = 0
+    private var textHideWorkItem: DispatchWorkItem?
+    private var currentBaseColor: NSColor?
+
+    var hasVisibleContent: Bool { !contentLayer.isHidden }
+
+    private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        setupLayers()
+    }
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { false }   // bottom-left origin, matching the layout math
+
+    // MARK: - Layer tree
+
+    private func setupLayers() {
+        guard let root = layer else { return }
+
+        // Now-playing content, grouped so we can reveal/hide it without touching the overlays.
+        root.addSublayer(contentLayer)
+        contentLayer.isHidden = true   // start empty; the wallpaper shows through until playback
+
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 1)   // top
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 0)     // bottom
+        contentLayer.addSublayer(gradientLayer)
+
+        cardShadowLayer.backgroundColor = NSColor.white.cgColor   // shadow caster behind the card
+        cardShadowLayer.shadowColor = NSColor.black.cgColor
+        cardShadowLayer.shadowOpacity = 0.45
+        contentLayer.addSublayer(cardShadowLayer)
+
+        cardLayer.contentsGravity = .resizeAspectFill
+        cardLayer.masksToBounds = true
+        contentLayer.addSublayer(cardLayer)
+
+        // The Canvas video fills the same card slot as the cover, clipped to its corners.
+        playerLayer.videoGravity = .resizeAspectFill
+        playerLayer.masksToBounds = true
+        playerLayer.isHidden = true
+        contentLayer.addSublayer(playerLayer)
+
+        configureText(titleLayer, color: NSColor.white)
+        configureText(artistLayer, color: NSColor(white: 1, alpha: 0.65))
+        contentLayer.addSublayer(titleLayer)
+        contentLayer.addSublayer(artistLayer)
+
+        // Always-on overlays, above the content, so they persist even when idle.
+        barLayer.backgroundColor = NSColor.black.cgColor
+        root.addSublayer(barLayer)
+
+        cornerLayer.fillRule = .evenOdd
+        cornerLayer.fillColor = NSColor.black.cgColor
+        root.addSublayer(cornerLayer)
+    }
+
+    private func configureText(_ layer: CATextLayer, color: NSColor) {
+        layer.foregroundColor = color.cgColor
+        layer.alignmentMode = .left
+        layer.truncationMode = .end
+        layer.isWrapped = false
+    }
+
+    // MARK: - Layout
+
+    override func layout() {
+        super.layout()
+        let b = bounds
+        let s = scale
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        contentLayer.frame = b
+        gradientLayer.frame = b
+
+        // Black menu-bar bar across the top.
+        let barHeight = Self.menuBarHeightPixels / s
+        barLayer.frame = CGRect(x: 0, y: b.height - barHeight, width: b.width, height: barHeight)
+
+        // Black rounded corners on the content region *below* the bar.
+        let radius = cornerRadiusPixels / s
+        let contentRect = CGRect(x: 0, y: 0, width: b.width, height: b.height - barHeight)
+        let path = CGMutablePath()
+        path.addRect(contentRect)
+        path.addRoundedRect(in: contentRect, cornerWidth: radius, cornerHeight: radius)
+        cornerLayer.path = path
+        cornerLayer.frame = b
+
+        // Centered card, sized to the media's aspect ratio inside a bounding box
+        // (square for the cover, portrait for a Canvas video).
+        let maxH = b.height * 0.5
+        let maxW = b.width * 0.42
+        var cardW = min(maxW, maxH * cardAspect)
+        var cardH = cardW / cardAspect
+        if cardH > maxH { cardH = maxH; cardW = cardH * cardAspect }
+        let cardRect = CGRect(x: (b.width - cardW) / 2,
+                              y: (b.height - cardH) / 2 + b.height * 0.02,
+                              width: cardW, height: cardH)
+        let minSide = min(cardW, cardH)
+        for card in [cardShadowLayer, cardLayer, playerLayer] {
+            card.frame = cardRect
+            card.cornerRadius = minSide * 0.03
+            card.contentsScale = s
+        }
+        cardShadowLayer.shadowRadius = minSide * 0.06
+        cardShadowLayer.shadowOffset = CGSize(width: 0, height: -minSide * 0.02)
+
+        // Title + artist, bottom-left.
+        let margin = b.width * 0.045
+        let titleSize = max(22, b.height * 0.032)
+        let artistSize = max(15, b.height * 0.020)
+        let artistY = b.height * 0.06
+        applyFont(titleLayer, size: titleSize, weight: .bold, scale: s)
+        applyFont(artistLayer, size: artistSize, weight: .medium, scale: s)
+        artistLayer.frame = CGRect(x: margin, y: artistY,
+                                   width: b.width - margin * 2, height: artistSize * 1.4)
+        titleLayer.frame = CGRect(x: margin, y: artistY + artistSize * 1.6,
+                                  width: b.width - margin * 2, height: titleSize * 1.4)
+    }
+
+    private func applyFont(_ layer: CATextLayer, size: CGFloat, weight: NSFont.Weight, scale: CGFloat) {
+        let font = NSFont.systemFont(ofSize: size, weight: weight)
+        layer.font = font
+        layer.fontSize = size
+        layer.contentsScale = scale
+    }
+
+    // MARK: - Content updates
+
+    func update(track: NowPlaying, cover: NSImage, canvasURL: URL?) {
+        let wasIdle = isIdle
+        let isNewTrack = track.id != shownTrackID
+        let revealWholeOverlay =
+            hideWhenIdle && hideFrameWhenIdle &&
+            (wasIdle || layer?.isHidden == true)
+        isIdle = false
+        layer?.isHidden = false
+
+        // A Canvas URL arrives as a second update for the same track. It must not cancel
+        // a reveal or slide that the cover update has already started.
+        if wasIdle || isNewTrack || contentLayer.isHidden {
+            visibilityGeneration += 1
+            layer?.mask = nil
+            contentLayer.mask = nil
+        }
+
+        let wasHidden = contentLayer.isHidden || (wasIdle && hideWhenIdle)
+        let shouldSlide = !wasHidden && isNewTrack
+        // Preserve the complete old scene underneath the incoming one.
+        let outgoing = shouldSlide ? snapshotScene() : nil
+
+        if let cg = cover.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            cardLayer.contents = cg
+        }
+        let base = ColorExtractor.vibrant(from: cover)
+        currentBaseColor = base
+        applyGradient(from: base)
+        titleLayer.string = track.title
+        artistLayer.string = track.artist
+
+        if let canvasURL {
+            startCanvas(url: canvasURL)
+        } else {
+            stopCanvas()
+        }
+        startAmbientAnimations()
+
+        shownTrackID = track.id
+        contentLayer.isHidden = false
+        if wasIdle || isNewTrack {
+            showTextTemporarily()
+        }
+        // First appearance / resuming from idle gets the circular fill; a song switch
+        // slides old→off and new→in; a Canvas upgrade of the same track gets nothing.
+        if revealWholeOverlay {
+            animateReveal(masking: layer)
+        } else if wasHidden {
+            animateReveal(masking: contentLayer)
+        } else if let outgoing {
+            performSlideIn(over: outgoing)
+        }
+    }
+
+    /// Duplicates the complete outgoing scene so the new one can slide over it.
+    private func snapshotScene() -> CALayer {
+        let container = CALayer()
+        container.frame = contentLayer.bounds
+
+        let background = CAGradientLayer()
+        background.frame = gradientLayer.frame
+        background.colors = gradientLayer.colors
+        background.locations = gradientLayer.locations
+        background.startPoint = gradientLayer.startPoint
+        background.endPoint = gradientLayer.endPoint
+        container.addSublayer(background)
+
+        let shadow = CALayer()
+        shadow.frame = cardShadowLayer.frame
+        shadow.cornerRadius = cardShadowLayer.cornerRadius
+        shadow.backgroundColor = cardShadowLayer.backgroundColor
+        shadow.shadowColor = cardShadowLayer.shadowColor
+        shadow.shadowOpacity = cardShadowLayer.shadowOpacity
+        shadow.shadowRadius = cardShadowLayer.shadowRadius
+        shadow.shadowOffset = cardShadowLayer.shadowOffset
+        container.addSublayer(shadow)
+
+        // Use the cover image even if a Canvas video was showing (good enough for the exit).
+        let cover = CALayer()
+        cover.frame = cardLayer.frame
+        cover.contents = cardLayer.contents
+        cover.contentsGravity = cardLayer.contentsGravity
+        cover.cornerRadius = cardLayer.cornerRadius
+        cover.masksToBounds = true
+        container.addSublayer(cover)
+
+        for src in [titleLayer, artistLayer] {
+            let text = CATextLayer()
+            text.frame = src.frame
+            text.string = src.string
+            text.font = src.font
+            text.fontSize = src.fontSize
+            text.foregroundColor = src.foregroundColor
+            text.alignmentMode = src.alignmentMode
+            text.truncationMode = src.truncationMode
+            text.isWrapped = src.isWrapped
+            text.contentsScale = src.contentsScale
+            text.opacity = src.opacity
+            container.addSublayer(text)
+        }
+
+        // The real layers are the incoming scene, so the snapshot belongs underneath.
+        contentLayer.insertSublayer(container, below: gradientLayer)
+        return container
+    }
+
+    /// The new scene enters as an opaque page over the previous scene. The previous scene
+    /// shifts only slightly left underneath it, while incoming elements travel at different
+    /// depths. Nothing cross-fades.
+    private func performSlideIn(over outgoing: CALayer) {
+        let dx = bounds.width
+        let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        let duration: CFTimeInterval = 0.60
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { outgoing.removeFromSuperlayer() }
+        let outgoingShift = CABasicAnimation(keyPath: "position.x")
+        outgoingShift.fromValue = 0
+        outgoingShift.toValue = -dx * 0.22
+        outgoingShift.isAdditive = true
+        outgoingShift.duration = duration
+        outgoingShift.timingFunction = ease
+        outgoingShift.fillMode = .forwards
+        outgoingShift.isRemovedOnCompletion = false
+        outgoing.add(outgoingShift, forKey: "parallax-underlay")
+        CATransaction.commit()
+
+        // The opaque background is the leading page. The foreground trails it by
+        // different amounts, producing depth while remaining part of the same entrance.
+        let backgroundSlide = CABasicAnimation(keyPath: "position.x")
+        backgroundSlide.fromValue = dx
+        backgroundSlide.toValue = 0
+        backgroundSlide.isAdditive = true
+        backgroundSlide.duration = duration
+        backgroundSlide.timingFunction = ease
+        gradientLayer.add(backgroundSlide, forKey: "incoming-background")
+
+        let incomingLayers: [(CALayer, CGFloat)] = [
+            (cardShadowLayer, 1.08),
+            (cardLayer, 1.10),
+            (playerLayer, 1.10),
+            (titleLayer, 1.18),
+            (artistLayer, 1.15),
+        ]
+        for (foreground, depth) in incomingLayers {
+            let incoming = CABasicAnimation(keyPath: "position.x")
+            incoming.fromValue = dx * depth
+            incoming.toValue = 0
+            incoming.isAdditive = true
+            incoming.duration = duration
+            incoming.timingFunction = ease
+            foreground.add(incoming, forKey: "parallax-slidein")
+        }
+    }
+
+    private func showTextTemporarily() {
+        textHideWorkItem?.cancel()
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        titleLayer.opacity = 1
+        artistLayer.opacity = 1
+        CATransaction.commit()
+        titleLayer.removeAnimation(forKey: "delayed-text-fade")
+        artistLayer.removeAnimation(forKey: "delayed-text-fade")
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.isIdle else { return }
+            for textLayer in [self.titleLayer, self.artistLayer] {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                textLayer.opacity = 0
+                CATransaction.commit()
+
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 1
+                fade.toValue = 0
+                fade.duration = 0.65
+                fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                textLayer.add(fade, forKey: "delayed-text-fade")
+            }
+            self.textHideWorkItem = nil
+        }
+        textHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: work)
+    }
+
+    /// Nothing playing: either retreat the whole overlay into the bottom-left corner or
+    /// hide only the content and leave the black bar + corners visible.
+    func showIdle() {
+        isIdle = true
+        visibilityGeneration += 1
+        textHideWorkItem?.cancel()
+        textHideWorkItem = nil
+        contentLayer.mask = nil
+        shownTrackID = nil
+        if hideWhenIdle {
+            hideIdleLayers(animated: true)
+        } else {
+            contentLayer.isHidden = true
+            stopCanvas()
+        }
+    }
+
+    func setHideWhenIdle(
+        _ enabled: Bool,
+        currentlyIdle: Bool,
+        animated: Bool
+    ) {
+        hideWhenIdle = enabled
+        isIdle = currentlyIdle
+        visibilityGeneration += 1
+
+        guard currentlyIdle else {
+            layer?.isHidden = false
+            layer?.mask = nil
+            contentLayer.mask = nil
+            return
+        }
+
+        if enabled {
+            hideIdleLayers(animated: animated)
+        } else {
+            layer?.mask = nil
+            layer?.isHidden = false
+            contentLayer.isHidden = true
+            stopCanvas()
+        }
+    }
+
+    func setHideFrameWhenIdle(
+        _ enabled: Bool,
+        currentlyIdle: Bool,
+        animated: Bool
+    ) {
+        hideFrameWhenIdle = enabled
+        isIdle = currentlyIdle
+        visibilityGeneration += 1
+        layer?.mask = nil
+        contentLayer.mask = nil
+
+        guard currentlyIdle, hideWhenIdle else {
+            layer?.isHidden = false
+            return
+        }
+
+        if enabled {
+            hideIdleLayers(animated: animated)
+        } else {
+            layer?.isHidden = false
+            contentLayer.isHidden = true
+        }
+    }
+
+    func setUseVibrantColors(_ enabled: Bool) {
+        useVibrantColors = enabled
+        guard let currentBaseColor else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        applyGradient(from: currentBaseColor)
+        CATransaction.commit()
+    }
+
+    private func hideIdleLayers(animated: Bool) {
+        guard let root = layer else { return }
+        root.isHidden = false
+
+        let target = hideFrameWhenIdle ? root : contentLayer
+        if animated, !target.isHidden {
+            animateRetreat(masking: target, hidesWholeOverlay: hideFrameWhenIdle)
+        } else {
+            target.mask = nil
+            contentLayer.isHidden = true
+            root.isHidden = hideFrameWhenIdle
+        }
+    }
+
+    /// Reveals a layer with a circular wipe growing from the bottom-left corner.
+    private func animateReveal(masking target: CALayer?) {
+        guard let target else { return }
+        let w = bounds.width, h = bounds.height
+        guard w > 0, h > 0 else { return }
+
+        let radius = hypot(w, h) * 1.1                 // reaches past the far corner
+        let corner = CGPoint(x: 0, y: 0)               // bottom-left (non-flipped)
+        let endRect = CGRect(x: corner.x - radius, y: corner.y - radius, width: radius * 2, height: radius * 2)
+        let startRect = CGRect(origin: corner, size: .zero)
+
+        let mask = CAShapeLayer()
+        mask.path = CGPath(ellipseIn: endRect, transform: nil)
+        target.mask = mask
+
+        let reveal = CABasicAnimation(keyPath: "path")
+        reveal.fromValue = CGPath(ellipseIn: startRect, transform: nil)
+        reveal.toValue = CGPath(ellipseIn: endRect, transform: nil)
+        reveal.duration = 0.9
+        reveal.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        let generation = visibilityGeneration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self, weak target] in
+            guard let self,
+                  self.visibilityGeneration == generation else { return }
+            target?.mask = nil
+        }
+        mask.add(reveal, forKey: "reveal")
+        CATransaction.commit()
+    }
+
+    /// Runs the reveal path backwards for either the content or the entire composition.
+    private func animateRetreat(
+        masking target: CALayer,
+        hidesWholeOverlay: Bool
+    ) {
+        let w = bounds.width, h = bounds.height
+        guard w > 0, h > 0 else {
+            contentLayer.isHidden = true
+            target.isHidden = true
+            stopCanvas()
+            return
+        }
+
+        let generation = visibilityGeneration
+        let radius = hypot(w, h) * 1.1
+        let corner = CGPoint(x: 0, y: 0)
+        let fullRect = CGRect(
+            x: corner.x - radius,
+            y: corner.y - radius,
+            width: radius * 2,
+            height: radius * 2)
+        let pointRect = CGRect(origin: corner, size: .zero)
+
+        target.isHidden = false
+        let mask = CAShapeLayer()
+        mask.path = CGPath(ellipseIn: pointRect, transform: nil)
+        target.mask = mask
+
+        let retreat = CABasicAnimation(keyPath: "path")
+        retreat.fromValue = CGPath(ellipseIn: fullRect, transform: nil)
+        retreat.toValue = CGPath(ellipseIn: pointRect, transform: nil)
+        retreat.duration = 0.9
+        retreat.timingFunction = CAMediaTimingFunction(name: .easeIn)
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self, weak target] in
+            guard let self,
+                  let target,
+                  self.visibilityGeneration == generation,
+                  self.isIdle,
+                  self.hideWhenIdle,
+                  self.hideFrameWhenIdle == hidesWholeOverlay else { return }
+            target.mask = nil
+            self.contentLayer.isHidden = true
+            target.isHidden = true
+            self.stopCanvas()
+        }
+        mask.add(retreat, forKey: "retreat")
+        CATransaction.commit()
+    }
+
+    // MARK: - Canvas video
+
+    private func startCanvas(url: URL) {
+        let item = AVPlayerItem(url: url)
+        let queue = AVQueuePlayer()
+        queue.isMuted = true
+        looper = AVPlayerLooper(player: queue, templateItem: item)   // seamless loop
+        playerLayer.player = queue
+        player = queue
+        queue.play()
+
+        playerLayer.isHidden = false
+        cardLayer.isHidden = true      // video takes the card slot; cover hidden behind it
+
+        // Canvas clips are portrait; assume 9:16 immediately, then refine to the real size.
+        updateCardAspect(9.0 / 16.0)
+        loadVideoAspect(url: url)
+    }
+
+    private func stopCanvas() {
+        player?.pause()
+        player = nil
+        looper = nil
+        playerLayer.player = nil
+
+        playerLayer.isHidden = true
+        cardLayer.isHidden = false
+        updateCardAspect(1.0)          // square for the cover
+    }
+
+    /// Reads the video's true display size (accounting for any rotation) and matches the card to it.
+    private func loadVideoAspect(url: URL) {
+        let asset = AVURLAsset(url: url)
+        Task { [weak self] in
+            guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                  let naturalSize = try? await track.load(.naturalSize),
+                  let transform = try? await track.load(.preferredTransform) else { return }
+            let oriented = naturalSize.applying(transform)
+            let size = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+            guard size.width > 0, size.height > 0 else { return }
+            await MainActor.run { self?.updateCardAspect(size.width / size.height) }
+        }
+    }
+
+    private func updateCardAspect(_ aspect: CGFloat) {
+        guard aspect > 0, abs(aspect - cardAspect) > 0.001 else { return }
+        cardAspect = aspect
+        needsLayout = true
+    }
+
+    // MARK: - Ambient motion
+
+    private func startAmbientAnimations() {
+        // Slow Ken Burns zoom on the cover card (cover mode).
+        let zoom = CABasicAnimation(keyPath: "transform.scale")
+        zoom.fromValue = 1.0
+        zoom.toValue = 1.08
+        zoom.duration = 24
+        zoom.autoreverses = true
+        zoom.repeatCount = .infinity
+        zoom.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        cardLayer.removeAnimation(forKey: "kenburns")
+        cardLayer.add(zoom, forKey: "kenburns")
+
+        // Drifting gradient.
+        let drift = CABasicAnimation(keyPath: "startPoint")
+        drift.fromValue = CGPoint(x: 0.3, y: 1.0)
+        drift.toValue = CGPoint(x: 0.7, y: 1.0)
+        drift.duration = 18
+        drift.autoreverses = true
+        drift.repeatCount = .infinity
+        drift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        gradientLayer.removeAnimation(forKey: "drift")
+        gradientLayer.add(drift, forKey: "drift")
+    }
+
+    private func adjust(_ color: NSColor, brightness: CGFloat, saturationScale: CGFloat) -> NSColor {
+        let c = color.usingColorSpace(.deviceRGB) ?? color
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return NSColor(deviceHue: h, saturation: min(1, s * saturationScale), brightness: brightness, alpha: 1)
+    }
+
+    private func applyGradient(from base: NSColor) {
+        if useVibrantColors {
+            gradientLayer.colors = [
+                adjust(base, brightness: 0.70, saturationScale: 1.35).cgColor,
+                adjust(base, brightness: 0.30, saturationScale: 1.15).cgColor,
+            ]
+        } else {
+            gradientLayer.colors = [
+                adjust(base, brightness: 0.42, saturationScale: 0.90).cgColor,
+                adjust(base, brightness: 0.20, saturationScale: 0.95).cgColor,
+            ]
+        }
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+
+        var bytes = [CChar](repeating: 0, count: size)
+        let result = bytes.withUnsafeMutableBytes { buffer in
+            sysctlbyname(name, buffer.baseAddress, &size, nil, 0)
+        }
+        guard result == 0 else { return nil }
+        return String(cString: bytes)
+    }
+}
