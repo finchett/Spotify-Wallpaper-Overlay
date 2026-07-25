@@ -14,9 +14,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingIdleRetreat: DispatchWorkItem?
     private var signalSources: [DispatchSourceSignal] = []
     private var isShuttingDown = false
+    private var isPollInFlight = false
+    private let artworkCache = NSCache<NSString, NSImage>()
+    private var pendingCanvas: (trackID: String, url: URL)?
 
-    // Poll cadence in seconds. Cheap AppleScript query; media only loads on change.
-    private let pollInterval: TimeInterval = 3.0
+    // A lightweight state/id probe. Metadata, artwork and Canvas only load on change.
+    private let pollInterval: TimeInterval = 0.5
 
     /// Track id currently shown, so we only reload media on change.
     private var currentTrackID: String?
@@ -262,9 +265,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Polling
 
     private func startPolling() {
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         poll()
     }
 
@@ -343,48 +348,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func poll() {
-        guard let np = spotify.fetch() else {
-            setStatus("Spotify not playing")
-            if !isIdle {
-                isIdle = true
-                currentTrackID = nil     // so playback resumes with a fresh reveal
-                pendingWallpaperBake?.cancel()
-                pendingWallpaperBake = nil
-                beginIdleTransition()
+        guard !isPollInFlight, !isShuttingDown else { return }
+        isPollInFlight = true
+        spotify.probe { [weak self] result in
+            guard let self else { return }
+            self.isPollInFlight = false
+            switch result {
+            case .playing(let trackID):
+                self.handlePlaying(trackID: trackID)
+            case .stopped:
+                self.handleStopped()
+            case .unavailable:
+                // A transient AppleScript failure is not a playback stop.
+                break
             }
-            return
         }
+    }
+
+    private func handleStopped() {
+        setStatus("Spotify not playing")
+        if !isIdle {
+            isIdle = true
+            currentTrackID = nil     // so playback resumes with a fresh reveal
+            pendingCanvas = nil
+            pendingWallpaperBake?.cancel()
+            pendingWallpaperBake = nil
+            beginIdleTransition()
+        }
+    }
+
+    private func handlePlaying(trackID: String) {
         pendingIdleRetreat?.cancel()
         pendingIdleRetreat = nil
         isIdle = false
-        setStatus("\(np.title) — \(np.artist)")
 
-        guard np.id != currentTrackID, let art = URL(string: np.artworkURL) else { return }
-        currentTrackID = np.id
+        guard trackID != currentTrackID else { return }
+        currentTrackID = trackID
+        pendingCanvas = nil
 
-        // 1) Download the static cover and show it immediately (fallback look).
-        session.dataTask(with: art) { [weak self] data, _, _ in
-            guard let self, let data, let cover = NSImage(data: data) else { return }
-            DispatchQueue.main.async {
-                guard np.id == self.currentTrackID else { return }   // track moved on
-                self.lastTrack = np
-                self.lastCover = cover
-                self.lastCanvasURL = nil
-                self.overlay.update(track: np, cover: cover, canvasURL: nil)
-                self.scheduleWallpaperBake()
+        // Resuming the same track should not wait for metadata or artwork again.
+        if let track = lastTrack, track.id == trackID, let cover = lastCover {
+            setStatus("\(track.title) — \(track.artist)")
+            overlay.update(track: track, cover: cover, canvasURL: lastCanvasURL)
+            scheduleWallpaperBake()
+            return
+        }
+
+        spotify.fetchMetadata { [weak self] np in
+            guard let self else { return }
+            guard let np, np.id == trackID else {
+                if self.currentTrackID == trackID {
+                    self.currentTrackID = nil
+                }
+                return
             }
-        }.resume()
+            guard self.currentTrackID == trackID else { return }
+            self.setStatus("\(np.title) — \(np.artist)")
+            self.loadMedia(for: np)
+        }
+    }
 
-        // 2) In parallel, try the (unofficial) Spotify Canvas. If it resolves and the
-        //    track is still current, upgrade the overlay to the looping video.
+    private func loadMedia(for np: NowPlaying) {
+        guard let art = URL(string: np.artworkURL) else {
+            currentTrackID = nil
+            return
+        }
+
+        if let cover = artworkCache.object(forKey: np.id as NSString) {
+            show(track: np, cover: cover)
+        } else {
+            session.dataTask(with: art) { [weak self] data, _, _ in
+                guard let self, let data, let cover = NSImage(data: data) else { return }
+                DispatchQueue.main.async {
+                    guard np.id == self.currentTrackID else { return }
+                    self.artworkCache.setObject(cover, forKey: np.id as NSString)
+                    self.show(track: np, cover: cover)
+                }
+            }.resume()
+        }
+
         canvas.fetchCanvasURL(trackURI: np.id) { [weak self] canvasURL in
             guard let self, let canvasURL else { return }
             DispatchQueue.main.async {
-                guard np.id == self.currentTrackID, let cover = self.lastCover else { return }
+                guard np.id == self.currentTrackID else { return }
+                self.pendingCanvas = (np.id, canvasURL)
+                guard self.lastTrack?.id == np.id, let cover = self.lastCover else { return }
                 self.lastCanvasURL = canvasURL
                 self.overlay.update(track: np, cover: cover, canvasURL: canvasURL)
             }
         }
+    }
+
+    private func show(track: NowPlaying, cover: NSImage) {
+        guard track.id == currentTrackID else { return }
+        let canvasURL = pendingCanvas?.trackID == track.id ? pendingCanvas?.url : nil
+        lastTrack = track
+        lastCover = cover
+        lastCanvasURL = canvasURL
+        overlay.update(track: track, cover: cover, canvasURL: canvasURL)
+        scheduleWallpaperBake()
     }
 }
 
