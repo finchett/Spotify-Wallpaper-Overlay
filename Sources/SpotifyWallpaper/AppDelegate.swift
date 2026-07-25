@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let session = URLSession(configuration: .default)
     private var timer: Timer?
     private var pendingWallpaperBake: DispatchWorkItem?
-    private var pendingWallpaperRestore: DispatchWorkItem?
+    private var pendingIdleRetreat: DispatchWorkItem?
 
     // Poll cadence in seconds. Cheap AppleScript query; media only loads on change.
     private let pollInterval: TimeInterval = 3.0
@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         pendingWallpaperBake?.cancel()
-        pendingWallpaperRestore?.cancel()
+        pendingIdleRetreat?.cancel()
         wallpaperBaker.restore()
     }
 
@@ -159,9 +159,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             pendingWallpaperBake?.cancel()
             pendingWallpaperBake = nil
-            pendingWallpaperRestore?.cancel()
-            pendingWallpaperRestore = nil
+            pendingIdleRetreat?.cancel()
+            pendingIdleRetreat = nil
             wallpaperBaker.restore()
+            if isIdle {
+                overlay.showIdle()
+            }
         }
     }
 
@@ -169,18 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.hideOverlayWhenIdle = on
         model.hideOverlayWhenIdle = on
         overlay.setHideWhenIdle(on)
-        if isIdle, wallpaperBaker.isBaked {
-            restoreWallpaperAfterIdleTransition()
-        }
     }
 
     private func applyHideFrameWhenIdle(_ on: Bool) {
         Settings.hideFrameWhenIdle = on
         model.hideFrameWhenIdle = on
         overlay.setHideFrameWhenIdle(on)
-        if isIdle, wallpaperBaker.isBaked {
-            restoreWallpaperAfterIdleTransition()
-        }
     }
 
     private func applyUseVibrantColors(_ on: Bool) {
@@ -245,9 +242,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.rebuildForScreens()
         if isIdle {
             overlay.showIdle()
-            if wallpaperBaker.isBaked {
-                restoreWallpaperAfterIdleTransition()
-            }
         } else if let track = lastTrack, let cover = lastCover {
             overlay.update(track: track, cover: cover, canvasURL: lastCanvasURL)
             scheduleWallpaperBake()
@@ -280,24 +274,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
-    /// Keep the baked image underneath the circular retreat so the revealed area does
-    /// not change mid-animation. Restore only after the 0.9-second mask has completed.
-    private func restoreWallpaperAfterIdleTransition() {
-        pendingWallpaperRestore?.cancel()
+    /// Restore while the full overlay still covers the desktop, allow WallpaperAgent
+    /// half a second to settle, then reveal the already-restored wallpaper.
+    private func beginIdleTransition() {
+        pendingIdleRetreat?.cancel()
+        pendingIdleRetreat = nil
 
-        guard model.bakeInMissionControl else { return }
-        guard model.hideOverlayWhenIdle else {
+        let wasBaked = wallpaperBaker.isBaked
+        if model.bakeInMissionControl {
             wallpaperBaker.restore()
+        }
+
+        guard model.bakeInMissionControl, wasBaked else {
+            overlay.showIdle()
+            return
+        }
+
+        guard model.hideOverlayWhenIdle else {
+            overlay.showIdle()
             return
         }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isIdle else { return }
-            self.wallpaperBaker.restore()
-            self.pendingWallpaperRestore = nil
+            self.overlay.showIdle()
+            self.pendingIdleRetreat = nil
         }
-        pendingWallpaperRestore = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+        pendingIdleRetreat = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     private func poll() {
@@ -308,13 +312,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 currentTrackID = nil     // so playback resumes with a fresh reveal
                 pendingWallpaperBake?.cancel()
                 pendingWallpaperBake = nil
-                overlay.showIdle()
-                restoreWallpaperAfterIdleTransition()
+                beginIdleTransition()
             }
             return
         }
-        pendingWallpaperRestore?.cancel()
-        pendingWallpaperRestore = nil
+        pendingIdleRetreat?.cancel()
+        pendingIdleRetreat = nil
         isIdle = false
         setStatus("\(np.title) — \(np.artist)")
 
