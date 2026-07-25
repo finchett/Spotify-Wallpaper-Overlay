@@ -33,14 +33,6 @@ final class OverlayWindow: NSWindow {
 
     func snapshot() -> NSImage? {
         guard overlayView.hasVisibleContent else { return nil }
-        overlayView.layoutSubtreeIfNeeded()
-        overlayView.displayIfNeeded()
-        let rect = overlayView.bounds
-        guard !rect.isEmpty,
-              let rep = overlayView.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
-        overlayView.cacheDisplay(in: rect, to: rep)
-        let image = NSImage(size: rect.size)
-        image.addRepresentation(rep)
-        return image
+        return overlayView.wallpaperSnapshot()
     }
 }

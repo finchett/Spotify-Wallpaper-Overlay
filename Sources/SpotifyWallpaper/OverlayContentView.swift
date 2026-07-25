@@ -1,5 +1,7 @@
 import AppKit
 import AVFoundation
+import CoreImage
+import CoreVideo
 import Darwin
 
 /// The layered view that fills a screen. The layout is identical either way — vibrant
@@ -34,6 +36,10 @@ final class OverlayContentView: NSView {
 
     private var player: AVQueuePlayer?
     private var looper: AVPlayerLooper?
+    private var videoOutput: AVPlayerItemVideoOutput?
+    private weak var videoOutputItem: AVPlayerItem?
+    private var videoOutputObserver: Any?
+    private let videoFrameContext = CIContext()
 
     /// Card aspect ratio (width / height): 1 for the square cover, the video's ratio for Canvas.
     private var cardAspect: CGFloat = 1.0
@@ -59,6 +65,55 @@ final class OverlayContentView: NSView {
         setupLayers()
     }
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Renders the wallpaper version of the overlay. Text is intentionally omitted, and
+    /// AVPlayerLayer is replaced with its current decoded frame because AppKit's display
+    /// cache does not reliably composite hardware-backed video layers.
+    func wallpaperSnapshot() -> NSImage? {
+        layoutSubtreeIfNeeded()
+        displayIfNeeded()
+
+        let rect = bounds
+        guard !rect.isEmpty else { return nil }
+
+        let savedTitleHidden = titleLayer.isHidden
+        let savedArtistHidden = artistLayer.isHidden
+        let savedCardHidden = cardLayer.isHidden
+        let savedPlayerHidden = playerLayer.isHidden
+        let savedCardContents = cardLayer.contents
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        titleLayer.isHidden = true
+        artistLayer.isHidden = true
+        if player != nil {
+            if let videoFrame = currentVideoFrame() {
+                cardLayer.contents = videoFrame
+            }
+            cardLayer.isHidden = false
+            playerLayer.isHidden = true
+        }
+        CATransaction.commit()
+
+        defer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            titleLayer.isHidden = savedTitleHidden
+            artistLayer.isHidden = savedArtistHidden
+            cardLayer.isHidden = savedCardHidden
+            playerLayer.isHidden = savedPlayerHidden
+            cardLayer.contents = savedCardContents
+            CATransaction.commit()
+        }
+
+        guard let rep = bitmapImageRepForCachingDisplay(in: rect) else {
+            return nil
+        }
+        cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: rect.size)
+        image.addRepresentation(rep)
+        return image
+    }
 
     override var isFlipped: Bool { false }   // bottom-left origin, matching the layout math
 
@@ -546,6 +601,18 @@ final class OverlayContentView: NSView {
         let queue = AVQueuePlayer()
         queue.isMuted = true
         looper = AVPlayerLooper(player: queue, templateItem: item)   // seamless loop
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                Int(kCVPixelFormatType_32BGRA),
+        ])
+        videoOutput = output
+        attachVideoOutput(to: queue.currentItem)
+        videoOutputObserver = queue.addPeriodicTimeObserver(
+            forInterval: CMTime(value: 1, timescale: 4),
+            queue: .main
+        ) { [weak self, weak queue] _ in
+            self?.attachVideoOutput(to: queue?.currentItem)
+        }
         playerLayer.player = queue
         player = queue
         queue.play()
@@ -559,6 +626,16 @@ final class OverlayContentView: NSView {
     }
 
     private func stopCanvas() {
+        if let videoOutputObserver, let player {
+            player.removeTimeObserver(videoOutputObserver)
+        }
+        videoOutputObserver = nil
+        if let videoOutput, let videoOutputItem {
+            videoOutputItem.remove(videoOutput)
+        }
+        videoOutputItem = nil
+        videoOutput = nil
+
         player?.pause()
         player = nil
         looper = nil
@@ -567,6 +644,34 @@ final class OverlayContentView: NSView {
         playerLayer.isHidden = true
         cardLayer.isHidden = false
         updateCardAspect(1.0)          // square for the cover
+    }
+
+    private func attachVideoOutput(to item: AVPlayerItem?) {
+        guard let item, let videoOutput else { return }
+        if videoOutputItem === item { return }
+        if let videoOutputItem {
+            videoOutputItem.remove(videoOutput)
+        }
+        item.add(videoOutput)
+        videoOutputItem = item
+    }
+
+    private func currentVideoFrame() -> CGImage? {
+        guard let player, let videoOutput else { return nil }
+        let hostTime = CACurrentMediaTime()
+        let outputTime = videoOutput.itemTime(forHostTime: hostTime)
+        var displayTime = CMTime.invalid
+        let pixelBuffer =
+            videoOutput.copyPixelBuffer(
+                forItemTime: outputTime,
+                itemTimeForDisplay: &displayTime) ??
+            videoOutput.copyPixelBuffer(
+                forItemTime: player.currentTime(),
+                itemTimeForDisplay: &displayTime)
+        guard let pixelBuffer else { return nil }
+
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        return videoFrameContext.createCGImage(image, from: image.extent)
     }
 
     /// Reads the video's true display size (accounting for any rotation) and matches the card to it.
