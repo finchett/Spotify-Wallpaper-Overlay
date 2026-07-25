@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import ServiceManagement
+import Darwin
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let spotify = SpotifyClient()
@@ -11,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var pendingWallpaperBake: DispatchWorkItem?
     private var pendingIdleRetreat: DispatchWorkItem?
+    private var signalSources: [DispatchSourceSignal] = []
+    private var isShuttingDown = false
 
     // Poll cadence in seconds. Cheap AppleScript query; media only loads on change.
     private let pollInterval: TimeInterval = 3.0
@@ -72,14 +75,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(activeSpaceChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemWillPowerOff),
+            name: NSWorkspace.willPowerOffNotification, object: nil)
 
+        installSignalHandlers()
         startPolling()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        restoreWallpaperBeforeExit()
+    }
+
+    private func restoreWallpaperBeforeExit() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        timer?.invalidate()
         pendingWallpaperBake?.cancel()
         pendingIdleRetreat?.cancel()
         wallpaperBaker.restore()
+    }
+
+    private func installSignalHandlers() {
+        for number in [SIGTERM, SIGINT, SIGHUP, SIGQUIT] {
+            Darwin.signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(
+                signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.terminate(afterReceiving: number)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
+    private func terminate(afterReceiving number: Int32) {
+        restoreWallpaperBeforeExit()
+        Darwin.signal(number, SIG_DFL)
+        Darwin.raise(number)
+        Darwin._exit(128 + number)
+    }
+
+    @objc private func systemWillPowerOff() {
+        restoreWallpaperBeforeExit()
     }
 
     // Keep running (as the desktop overlay) when the window closes; reopen via the dock.
