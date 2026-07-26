@@ -41,6 +41,14 @@ enum DesktopFrameMode: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+enum OverlayBackgroundMode: String, CaseIterable, Identifiable {
+    case albumColors
+    case desktopWallpaper
+    case customImage
+
+    var id: Self { self }
+}
+
 /// Small persisted preferences (UserDefaults).
 enum Settings {
     private static let menuBarKey = "showMenuBarIcon"
@@ -56,6 +64,11 @@ enum Settings {
     private static let songInfoPositionKey = "songInfoPosition"
     private static let songInfoSizeKey = "songInfoSize"
     private static let clickToRevealSongInfoKey = "clickToRevealSongInfo"
+    private static let backgroundModeKey = "backgroundMode"
+    private static let backgroundBlurKey = "backgroundBlur"
+    private static let backgroundBrightnessKey = "backgroundBrightness"
+    private static let customBackgroundImagePathKey = "customBackgroundImagePath"
+    private static let customBackgroundImageNameKey = "customBackgroundImageName"
 
     /// Whether the menu-bar icon is shown. Defaults to true on first run.
     static var showMenuBarIcon: Bool {
@@ -148,6 +161,60 @@ enum Settings {
     static var clickToRevealSongInfo: Bool {
         get { UserDefaults.standard.bool(forKey: clickToRevealSongInfoKey) }
         set { UserDefaults.standard.set(newValue, forKey: clickToRevealSongInfoKey) }
+    }
+
+    static var backgroundMode: OverlayBackgroundMode {
+        get {
+            rawValue(
+                backgroundModeKey,
+                default: OverlayBackgroundMode.albumColors)
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue.rawValue,
+                forKey: backgroundModeKey)
+        }
+    }
+
+    static var backgroundBlur: Double {
+        get { UserDefaults.standard.double(forKey: backgroundBlurKey) }
+        set { UserDefaults.standard.set(newValue, forKey: backgroundBlurKey) }
+    }
+
+    static var backgroundBrightness: Double {
+        get { UserDefaults.standard.double(forKey: backgroundBrightnessKey) }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: backgroundBrightnessKey)
+        }
+    }
+
+    static var customBackgroundImageURL: URL? {
+        get {
+            guard let path = UserDefaults.standard.string(
+                forKey: customBackgroundImagePathKey) else {
+                return nil
+            }
+            return URL(fileURLWithPath: path)
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue?.path,
+                forKey: customBackgroundImagePathKey)
+        }
+    }
+
+    static var customBackgroundImageName: String? {
+        get {
+            UserDefaults.standard.string(
+                forKey: customBackgroundImageNameKey)
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: customBackgroundImageNameKey)
+        }
     }
 
     private static func boolOrTrue(_ key: String) -> Bool {

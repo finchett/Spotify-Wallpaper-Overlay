@@ -9,12 +9,18 @@ final class OverlayController {
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
     private var songInfoSize = SongInfoSize.standard
+    private var backgroundMode = OverlayBackgroundMode.albumColors
+    private var backgroundBlur = 0.0
+    private var backgroundBrightness = 0.0
+    private var customBackgroundImage: NSImage?
+    private var desktopBackgrounds: [String: NSImage] = [:]
     private var isIdle = true
 
     /// (Re)create a window for every current screen. Safe to call on hot-plug / resolution change.
     func rebuildForScreens() {
         windows.forEach { $0.orderOut(nil) }
         windows = NSScreen.screens.map { OverlayWindow(screen: $0) }
+        captureDesktopWallpapers(overwrite: false)
         windows.forEach {
             $0.overlayView.setHideWhenIdle(
                 hideWhenIdle, currentlyIdle: isIdle, animated: false)
@@ -23,6 +29,7 @@ final class OverlayController {
             $0.overlayView.setSongInfoVisibility(songInfoVisibility)
             $0.overlayView.setSongInfoPosition(songInfoPosition)
             $0.overlayView.setSongInfoSize(songInfoSize)
+            applyBackground(to: $0)
         }
         windows.forEach { $0.orderFrontRegardless() }
     }
@@ -79,6 +86,68 @@ final class OverlayController {
 
     func revealSongInfo() {
         windows.forEach { $0.overlayView.revealSongInfo() }
+    }
+
+    func setBackgroundMode(_ mode: OverlayBackgroundMode) {
+        backgroundMode = mode
+        windows.forEach(applyBackground)
+    }
+
+    func setCustomBackgroundImage(_ image: NSImage?) {
+        customBackgroundImage = image
+        guard backgroundMode == .customImage else { return }
+        windows.forEach(applyBackground)
+    }
+
+    func setBackgroundEffects(blur: Double, brightness: Double) {
+        backgroundBlur = blur
+        backgroundBrightness = brightness
+        guard backgroundMode != .albumColors else { return }
+        windows.forEach(applyBackground)
+    }
+
+    func refreshDesktopWallpapers() {
+        captureDesktopWallpapers(overwrite: true)
+        guard backgroundMode == .desktopWallpaper else { return }
+        windows.forEach(applyBackground)
+    }
+
+    private func applyBackground(to window: OverlayWindow) {
+        let image: NSImage?
+        switch backgroundMode {
+        case .albumColors:
+            image = nil
+        case .desktopWallpaper:
+            image = desktopBackgrounds[screenKey(window.wallpaperScreen)]
+        case .customImage:
+            image = customBackgroundImage
+        }
+        window.overlayView.setBackground(
+            mode: backgroundMode,
+            image: image,
+            blur: backgroundBlur,
+            brightness: backgroundBrightness)
+    }
+
+    private func captureDesktopWallpapers(overwrite: Bool) {
+        for window in windows {
+            let screen = window.wallpaperScreen
+            let key = screenKey(screen)
+            if !overwrite, desktopBackgrounds[key] != nil {
+                continue
+            }
+            guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
+                  let image = NSImage(contentsOf: url) else {
+                continue
+            }
+            desktopBackgrounds[key] = image
+        }
+    }
+
+    private func screenKey(_ screen: NSScreen) -> String {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return (screen.deviceDescription[key] as? NSNumber)?.stringValue ??
+            screen.localizedName
     }
 
     /// Re-assert the windows (e.g. on a Space change) to reduce transition flicker.

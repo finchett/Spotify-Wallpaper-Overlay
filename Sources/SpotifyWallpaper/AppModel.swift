@@ -1,7 +1,9 @@
+import AppKit
 import Combine
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case display
+    case background
     case songInfo
     case playback
     case missionControl
@@ -12,9 +14,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .display: return "Display"
+        case .background: return "Background"
         case .songInfo: return "Song Info"
         case .playback: return "Playback"
-        case .missionControl: return "Wallpaper Fix"
+        case .missionControl: return "Wallpaper"
         case .app: return "App"
         }
     }
@@ -37,6 +40,12 @@ final class AppModel: ObservableObject {
     @Published var songInfoPosition = SongInfoPosition.bottomLeft
     @Published var songInfoSize = SongInfoSize.standard
     @Published var clickToRevealSongInfo = false
+    @Published var backgroundMode = OverlayBackgroundMode.albumColors
+    @Published var backgroundBlur = 0.0
+    @Published var backgroundBrightness = 0.0
+    @Published var customBackgroundImage: NSImage?
+    @Published var customBackgroundImageName: String?
+    @Published var desktopBackgroundPreview: NSImage?
     @Published var selectedSettingsPage = SettingsPage.display
 
     var loginAction: () -> Void = {}
@@ -52,4 +61,8 @@ final class AppModel: ObservableObject {
     var setSongInfoPosition: (SongInfoPosition) -> Void = { _ in }
     var setSongInfoSize: (SongInfoSize) -> Void = { _ in }
     var setClickToRevealSongInfo: (Bool) -> Void = { _ in }
+    var setBackgroundMode: (OverlayBackgroundMode) -> Void = { _ in }
+    var setBackgroundBlur: (Double) -> Void = { _ in }
+    var setBackgroundBrightness: (Double) -> Void = { _ in }
+    var chooseBackgroundImageAction: () -> Void = {}
 }

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import ServiceManagement
 import Darwin
+import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let spotify = SpotifyClient()
@@ -51,6 +52,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.songInfoPosition = Settings.songInfoPosition
         model.songInfoSize = Settings.songInfoSize
         model.clickToRevealSongInfo = Settings.clickToRevealSongInfo
+        model.backgroundMode = Settings.backgroundMode
+        model.backgroundBlur = Settings.backgroundBlur
+        model.backgroundBrightness = Settings.backgroundBrightness
+        model.customBackgroundImage =
+            Settings.customBackgroundImageURL.flatMap {
+                NSImage(contentsOf: $0)
+            }
+        model.customBackgroundImageName = Settings.customBackgroundImageName
+        refreshDesktopBackgroundPreview()
         model.loginAction = { [weak self] in self?.presentLogin() }
         model.setLaunchAtLogin = { [weak self] on in self?.applyLaunchAtLogin(on) }
         model.setShowMenuBarIcon = { [weak self] on in self?.applyMenuBarVisibility(on) }
@@ -82,6 +92,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.setClickToRevealSongInfo = { [weak self] on in
             self?.applyClickToRevealSongInfo(on)
         }
+        model.setBackgroundMode = { [weak self] mode in
+            self?.applyBackgroundMode(mode)
+        }
+        model.setBackgroundBlur = { [weak self] blur in
+            self?.applyBackgroundBlur(blur)
+        }
+        model.setBackgroundBrightness = { [weak self] brightness in
+            self?.applyBackgroundBrightness(brightness)
+        }
+        model.chooseBackgroundImageAction = { [weak self] in
+            self?.chooseBackgroundImage()
+        }
 
         setupMenuBar(enabled: model.showMenuBarIcon)
         // Show the window on launch only when there's a Dock icon; in background-agent mode
@@ -94,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.setSongInfoVisibility(model.songInfoVisibility)
         overlay.setSongInfoPosition(model.songInfoPosition)
         overlay.setSongInfoSize(model.songInfoSize)
+        overlay.setCustomBackgroundImage(model.customBackgroundImage)
+        overlay.setBackgroundEffects(
+            blur: model.backgroundBlur,
+            brightness: model.backgroundBrightness)
+        overlay.setBackgroundMode(model.backgroundMode)
         overlay.rebuildForScreens()
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
@@ -292,6 +319,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.clickToRevealSongInfo = on
     }
 
+    private func applyBackgroundMode(_ mode: OverlayBackgroundMode) {
+        Settings.backgroundMode = mode
+        model.backgroundMode = mode
+
+        if mode == .desktopWallpaper {
+            if wallpaperBaker.isBaked {
+                wallpaperBaker.restore()
+            }
+            overlay.refreshDesktopWallpapers()
+            refreshDesktopBackgroundPreview()
+        }
+
+        overlay.setBackgroundMode(mode)
+        scheduleWallpaperBake()
+    }
+
+    private func applyBackgroundBlur(_ blur: Double) {
+        let value = min(30, max(0, blur))
+        Settings.backgroundBlur = value
+        model.backgroundBlur = value
+        overlay.setBackgroundEffects(
+            blur: value,
+            brightness: model.backgroundBrightness)
+        scheduleWallpaperBake()
+    }
+
+    private func applyBackgroundBrightness(_ brightness: Double) {
+        let value = min(0.5, max(-0.8, brightness))
+        Settings.backgroundBrightness = value
+        model.backgroundBrightness = value
+        overlay.setBackgroundEffects(
+            blur: model.backgroundBlur,
+            brightness: value)
+        scheduleWallpaperBake()
+    }
+
+    private func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Background Image"
+        panel.prompt = "Choose Image"
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.begin { [weak self] response in
+            guard response == .OK,
+                  let self,
+                  let sourceURL = panel.url,
+                  let storedURL = self.storeBackgroundImage(sourceURL),
+                  let image = NSImage(contentsOf: storedURL) else {
+                return
+            }
+            Settings.customBackgroundImageURL = storedURL
+            Settings.customBackgroundImageName = sourceURL.lastPathComponent
+            self.model.customBackgroundImage = image
+            self.model.customBackgroundImageName = sourceURL.lastPathComponent
+            self.overlay.setCustomBackgroundImage(image)
+            self.applyBackgroundMode(.customImage)
+        }
+    }
+
+    private func storeBackgroundImage(_ sourceURL: URL) -> URL? {
+        let directory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask)[0]
+            .appendingPathComponent("SpotifyWallpaper", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true)
+            let fileExtension = sourceURL.pathExtension.isEmpty
+                ? "image" : sourceURL.pathExtension
+            let destination = directory.appendingPathComponent(
+                "custom-background-\(UUID().uuidString).\(fileExtension)")
+            try FileManager.default.copyItem(
+                at: sourceURL,
+                to: destination)
+
+            if let previous = Settings.customBackgroundImageURL,
+               previous.deletingLastPathComponent() == directory,
+               previous != destination {
+                try? FileManager.default.removeItem(at: previous)
+            }
+            return destination
+        } catch {
+            return nil
+        }
+    }
+
+    private func refreshDesktopBackgroundPreview() {
+        guard let screen = NSScreen.main,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
+            model.desktopBackgroundPreview = nil
+            return
+        }
+        model.desktopBackgroundPreview = NSImage(contentsOf: url)
+    }
+
     private func installDesktopClickMonitor() {
         desktopClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: .leftMouseDown
@@ -387,7 +511,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func screensChanged() {
         pendingWallpaperBake?.cancel()
+        if model.backgroundMode == .desktopWallpaper,
+           wallpaperBaker.isBaked {
+            wallpaperBaker.restore()
+        }
         overlay.rebuildForScreens()
+        if model.backgroundMode == .desktopWallpaper {
+            overlay.refreshDesktopWallpapers()
+            refreshDesktopBackgroundPreview()
+        }
         if isIdle {
             overlay.showIdle()
         } else if let track = lastTrack, let cover = lastCover {

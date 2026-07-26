@@ -26,6 +26,7 @@ final class OverlayContentView: NSView {
     /// hidden as a group — leaving the black bar + corners always visible on top.
     private let contentLayer = CALayer()
     private let gradientLayer = CAGradientLayer()
+    private let backgroundImageLayer = CALayer()
     private let cardShadowLayer = CALayer()
     private let cardLayer = CALayer()
     private let playerLayer = AVPlayerLayer()
@@ -52,6 +53,9 @@ final class OverlayContentView: NSView {
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
     private var songInfoSize = SongInfoSize.standard
+    private var backgroundMode = OverlayBackgroundMode.albumColors
+    private var backgroundBlur: CGFloat = 0
+    private var backgroundBrightness: CGFloat = 0
     private var isIdle = true
     private var visibilityGeneration = 0
     private var textHideWorkItem: DispatchWorkItem?
@@ -133,6 +137,11 @@ final class OverlayContentView: NSView {
         gradientLayer.endPoint = CGPoint(x: 0.5, y: 0)     // bottom
         contentLayer.addSublayer(gradientLayer)
 
+        backgroundImageLayer.contentsGravity = .resizeAspectFill
+        backgroundImageLayer.masksToBounds = true
+        backgroundImageLayer.isHidden = true
+        contentLayer.addSublayer(backgroundImageLayer)
+
         cardShadowLayer.backgroundColor = NSColor.white.cgColor   // shadow caster behind the card
         cardShadowLayer.shadowColor = NSColor.black.cgColor
         cardShadowLayer.shadowOpacity = 0.45
@@ -186,6 +195,11 @@ final class OverlayContentView: NSView {
 
         contentLayer.frame = b
         gradientLayer.frame = b
+        let backgroundBleed = backgroundBlur * 2
+        backgroundImageLayer.frame = b.insetBy(
+            dx: -backgroundBleed,
+            dy: -backgroundBleed)
+        backgroundImageLayer.contentsScale = s
 
         // Black menu-bar bar across the top.
         let barHeight = Self.menuBarHeightPixels / s
@@ -603,6 +617,54 @@ final class OverlayContentView: NSView {
         CATransaction.setDisableActions(true)
         applyGradient(from: currentBaseColor)
         CATransaction.commit()
+    }
+
+    func setBackground(
+        mode: OverlayBackgroundMode,
+        image: NSImage?,
+        blur: Double,
+        brightness: Double
+    ) {
+        backgroundMode = mode
+        backgroundBlur = CGFloat(max(0, blur))
+        backgroundBrightness = CGFloat(
+            min(0.5, max(-0.8, brightness)))
+        backgroundImageLayer.contents = image?.cgImage(
+            forProposedRect: nil,
+            context: nil,
+            hints: nil)
+        applyBackgroundPresentation()
+        needsLayout = true
+    }
+
+    private func applyBackgroundPresentation() {
+        let useImage =
+            backgroundMode != .albumColors &&
+            backgroundImageLayer.contents != nil
+        gradientLayer.isHidden = useImage
+        backgroundImageLayer.isHidden = !useImage
+
+        guard useImage else {
+            backgroundImageLayer.filters = nil
+            return
+        }
+
+        var filters: [CIFilter] = []
+        if backgroundBlur > 0,
+           let blur = CIFilter(name: "CIGaussianBlur") {
+            blur.setDefaults()
+            blur.setValue(backgroundBlur, forKey: kCIInputRadiusKey)
+            filters.append(blur)
+        }
+        if abs(backgroundBrightness) > 0.001,
+           let color = CIFilter(name: "CIColorControls") {
+            color.setDefaults()
+            color.setValue(
+                backgroundBrightness,
+                forKey: kCIInputBrightnessKey)
+            filters.append(color)
+        }
+        backgroundImageLayer.filters = filters
     }
 
     private func hideIdleLayers(animated: Bool) {

@@ -51,6 +51,8 @@ struct SettingsView: View {
         switch model.selectedSettingsPage {
         case .display:
             displaySettings
+        case .background:
+            backgroundSettings
         case .songInfo:
             songInfoSettings
         case .playback:
@@ -79,13 +81,6 @@ struct SettingsView: View {
                         ("Album artwork only", .artworkOnly),
                     ])
                 Divider()
-                SettingToggle(
-                    title: "Boost album colors",
-                    description: "Makes artwork backgrounds brighter and more saturated.",
-                    isOn: Binding(
-                        get: { model.useVibrantColors },
-                        set: { model.setUseVibrantColors($0) }))
-                Divider()
                 SettingChoice(
                     title: "Black desktop frame",
                     description: "Controls the black top strip and rounded corner masks.",
@@ -97,6 +92,66 @@ struct SettingsView: View {
                         ("Never", .never),
                         ("When a song is playing", .whenPlaying),
                     ])
+            }
+        }
+    }
+
+    private var backgroundSettings: some View {
+        SettingsPanel(
+            title: "Background",
+            subtitle: "Choose what sits behind the main artwork.",
+            systemImage: "photo") {
+            VStack(spacing: 13) {
+                SettingChoice(
+                    title: "Source",
+                    description: "Use album colors, your current wallpaper, or a separate image.",
+                    selection: Binding(
+                        get: { model.backgroundMode },
+                        set: { model.setBackgroundMode($0) }),
+                    choices: [
+                        ("Album colors", .albumColors),
+                        ("Current wallpaper", .desktopWallpaper),
+                        ("Chosen image", .customImage),
+                    ])
+
+                if model.backgroundMode == .albumColors {
+                    Divider()
+                    SettingToggle(
+                        title: "Boost album colors",
+                        description: "Makes artwork backgrounds brighter and more saturated.",
+                        isOn: Binding(
+                            get: { model.useVibrantColors },
+                            set: { model.setUseVibrantColors($0) }))
+                } else {
+                    if model.backgroundMode == .customImage {
+                        Divider()
+                        SettingAction(
+                            title: "Chosen image",
+                            description: model.customBackgroundImageName ??
+                                "No image selected",
+                            buttonTitle: "Choose…",
+                            action: model.chooseBackgroundImageAction)
+                    }
+                    Divider()
+                    SettingSlider(
+                        title: "Blur",
+                        description: "Softens the background behind the artwork.",
+                        valueText: "\(Int(model.backgroundBlur.rounded()))",
+                        value: Binding(
+                            get: { model.backgroundBlur },
+                            set: { model.setBackgroundBlur($0) }),
+                        range: 0...30)
+                    Divider()
+                    SettingSlider(
+                        title: "Brightness",
+                        description: "Darken or brighten the background image.",
+                        valueText:
+                            "\(Int((model.backgroundBrightness * 100).rounded()))%",
+                        value: Binding(
+                            get: { model.backgroundBrightness },
+                            set: { model.setBackgroundBrightness($0) }),
+                        range: -0.8...0.5)
+                }
             }
         }
     }
@@ -172,7 +227,7 @@ struct SettingsView: View {
 
     private var missionControlSettings: some View {
         SettingsPanel(
-            title: "Wallpaper Workaround",
+            title: "Wallpaper",
             subtitle: "Optional help for macOS Space and Mission Control visual glitches.",
             systemImage: "rectangle.3.group") {
             SettingToggle(
@@ -221,6 +276,7 @@ private extension SettingsPage {
     var systemImage: String {
         switch self {
         case .display: return "rectangle.on.rectangle"
+        case .background: return "photo"
         case .songInfo: return "textformat"
         case .playback: return "stop.circle"
         case .missionControl: return "rectangle.3.group"
@@ -370,6 +426,55 @@ private struct SettingChoice<Value: Hashable>: View {
     }
 }
 
+private struct SettingAction: View {
+    let title: String
+    let description: String
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 10)
+            Button(buttonTitle, action: action)
+        }
+    }
+}
+
+private struct SettingSlider: View {
+    let title: String
+    let description: String
+    let valueText: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(valueText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: range)
+        }
+    }
+}
+
 private struct DesktopPreview: View {
     @ObservedObject var model: AppModel
 
@@ -432,6 +537,17 @@ private struct DesktopPreview: View {
             case .whenPlaying:
                 return "The black frame appears during playback and hides when Spotify stops."
             }
+        case .background:
+            switch model.backgroundMode {
+            case .albumColors:
+                return "The background follows the current album artwork."
+            case .desktopWallpaper:
+                return "Your current desktop wallpaper sits behind the artwork."
+            case .customImage:
+                return model.customBackgroundImage == nil
+                    ? "Choose an image to use behind the artwork."
+                    : "Your chosen image sits behind the artwork."
+            }
         case .songInfo:
             return model.songInfoVisibility == .never
                 ? "Song information is hidden."
@@ -492,22 +608,58 @@ private struct DesktopPreview: View {
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing)
-        } else if model.useVibrantColors {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.72, green: 0.18, blue: 0.48),
-                    Color(red: 0.15, green: 0.08, blue: 0.30),
-                ],
-                startPoint: .top,
-                endPoint: .bottom)
         } else {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.34, green: 0.20, blue: 0.31),
-                    Color(red: 0.10, green: 0.07, blue: 0.13),
-                ],
-                startPoint: .top,
-                endPoint: .bottom)
+            switch model.backgroundMode {
+            case .albumColors:
+                if model.useVibrantColors {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.72, green: 0.18, blue: 0.48),
+                            Color(red: 0.15, green: 0.08, blue: 0.30),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                } else {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.34, green: 0.20, blue: 0.31),
+                            Color(red: 0.10, green: 0.07, blue: 0.13),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                }
+            case .desktopWallpaper:
+                imageBackground(model.desktopBackgroundPreview)
+            case .customImage:
+                imageBackground(model.customBackgroundImage)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func imageBackground(_ image: NSImage?) -> some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(1 + model.backgroundBlur / 300)
+                .blur(radius: model.backgroundBlur * 0.18)
+                .brightness(model.backgroundBrightness)
+                .clipped()
+        } else {
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.14, green: 0.22, blue: 0.32),
+                        Color(red: 0.05, green: 0.08, blue: 0.13),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+                Image(systemName: "photo")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
         }
     }
 
