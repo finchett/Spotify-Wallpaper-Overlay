@@ -6,19 +6,15 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                nowPlayingCard
-                accountCard
-                appearanceSection
-                idleSection
-                missionControlSection
-                appSection
-            }
-            .padding(24)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            nowPlayingCard
+            accountCard
+            settingsPicker
+            selectedSettings
         }
-        .frame(width: 440, height: 760)
+        .padding(24)
+        .frame(width: 440, height: 590, alignment: .top)
     }
 
     private var header: some View {
@@ -76,8 +72,37 @@ struct SettingsView: View {
         }
     }
 
-    private var appearanceSection: some View {
-        SettingsSection(title: "Appearance", systemImage: "paintpalette") {
+    private var settingsPicker: some View {
+        Picker("Settings", selection: Binding(
+            get: { model.selectedSettingsPage },
+            set: { model.selectedSettingsPage = $0 })) {
+            ForEach(SettingsPage.allCases) { page in
+                Text(page.title).tag(page)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    @ViewBuilder
+    private var selectedSettings: some View {
+        switch model.selectedSettingsPage {
+        case .appearance:
+            appearanceSettings
+        case .playback:
+            playbackSettings
+        case .missionControl:
+            missionControlSettings
+        case .app:
+            appSettings
+        }
+    }
+
+    private var appearanceSettings: some View {
+        SettingsPanel(
+            title: "Appearance",
+            subtitle: "Choose how the overlay looks.",
+            systemImage: "paintpalette") {
             SettingToggle(
                 title: "Boost album colors",
                 description: "Makes artwork backgrounds brighter and more saturated.",
@@ -87,8 +112,11 @@ struct SettingsView: View {
         }
     }
 
-    private var idleSection: some View {
-        SettingsSection(title: "When Playback Stops", systemImage: "stop.circle") {
+    private var playbackSettings: some View {
+        SettingsPanel(
+            title: "When Playback Stops",
+            subtitle: "Choose what remains visible while Spotify is idle.",
+            systemImage: "stop.circle") {
             VStack(spacing: 13) {
                 SettingToggle(
                     title: "Hide the now-playing artwork",
@@ -109,8 +137,11 @@ struct SettingsView: View {
         }
     }
 
-    private var missionControlSection: some View {
-        SettingsSection(title: "Mission Control", systemImage: "rectangle.3.group") {
+    private var missionControlSettings: some View {
+        SettingsPanel(
+            title: "Mission Control",
+            subtitle: "Control how the overlay appears across your Spaces.",
+            systemImage: "rectangle.3.group") {
             SettingToggle(
                 title: "Keep artwork visible in Mission Control",
                 description: "Temporarily applies the current artwork to every Space. Your original wallpaper is restored when playback stops or the app quits.",
@@ -120,8 +151,11 @@ struct SettingsView: View {
         }
     }
 
-    private var appSection: some View {
-        SettingsSection(title: "App", systemImage: "gearshape") {
+    private var appSettings: some View {
+        SettingsPanel(
+            title: "App",
+            subtitle: "Choose when the app runs and where it appears.",
+            systemImage: "gearshape") {
             VStack(spacing: 13) {
                 SettingToggle(
                     title: "Open automatically at login",
@@ -148,20 +182,32 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsSection<Content: View>: View {
+private struct SettingsPanel<Content: View>: View {
     let title: String
+    let subtitle: String
     let systemImage: String
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
             Card {
                 content
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 

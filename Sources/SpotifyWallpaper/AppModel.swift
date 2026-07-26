@@ -1,5 +1,23 @@
 import Combine
 
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case appearance
+    case playback
+    case missionControl
+    case app
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .appearance: return "Appearance"
+        case .playback: return "Playback"
+        case .missionControl: return "Mission Control"
+        case .app: return "App"
+        }
+    }
+}
+
 /// View-facing state shared between the AppDelegate (which drives everything) and the
 /// SwiftUI settings window. The delegate wires the action closures.
 final class AppModel: ObservableObject {
@@ -12,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published var hideOverlayWhenIdle = false
     @Published var hideFrameWhenIdle = false
     @Published var useVibrantColors = false
+    @Published var selectedSettingsPage = SettingsPage.appearance
 
     var loginAction: () -> Void = {}
     var setLaunchAtLogin: (Bool) -> Void = { _ in }
