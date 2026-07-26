@@ -33,6 +33,14 @@ enum SongInfoSize: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+enum DesktopFrameMode: String, CaseIterable, Identifiable {
+    case always
+    case never
+    case whenPlaying
+
+    var id: Self { self }
+}
+
 /// Small persisted preferences (UserDefaults).
 enum Settings {
     private static let menuBarKey = "showMenuBarIcon"
@@ -41,6 +49,7 @@ enum Settings {
     private static let hideWhenIdleKey = "hideOverlayWhenIdle"
     private static let hideFrameWhenIdleKey = "hideFrameWhenIdle"
     private static let showDesktopFrameKey = "showDesktopFrame"
+    private static let desktopFrameModeKey = "desktopFrameMode"
     private static let vibrantColorsKey = "useVibrantColors"
     private static let mediaDisplayModeKey = "mediaDisplayMode"
     private static let songInfoVisibilityKey = "songInfoVisibility"
@@ -72,16 +81,29 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: hideWhenIdleKey) }
     }
 
-    /// Whether idle hiding also removes the always-on black framing.
-    static var hideFrameWhenIdle: Bool {
-        get { UserDefaults.standard.bool(forKey: hideFrameWhenIdleKey) }
-        set { UserDefaults.standard.set(newValue, forKey: hideFrameWhenIdleKey) }
-    }
+    static var desktopFrameMode: DesktopFrameMode {
+        get {
+            if let saved = UserDefaults.standard.string(
+                forKey: desktopFrameModeKey),
+               let mode = DesktopFrameMode(rawValue: saved) {
+                return mode
+            }
 
-    /// Master switch for the black top strip and rounded corner masks.
-    static var showDesktopFrame: Bool {
-        get { boolOrTrue(showDesktopFrameKey) }
-        set { UserDefaults.standard.set(newValue, forKey: showDesktopFrameKey) }
+            // Preserve the intent of the two older frame switches.
+            if UserDefaults.standard.object(forKey: showDesktopFrameKey) != nil,
+               !UserDefaults.standard.bool(forKey: showDesktopFrameKey) {
+                return .never
+            }
+            if UserDefaults.standard.bool(forKey: hideFrameWhenIdleKey) {
+                return .whenPlaying
+            }
+            return .always
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue.rawValue,
+                forKey: desktopFrameModeKey)
+        }
     }
 
     static var useVibrantColors: Bool {

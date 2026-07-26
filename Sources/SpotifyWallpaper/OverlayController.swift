@@ -4,8 +4,7 @@ import AppKit
 final class OverlayController {
     private var windows: [OverlayWindow] = []
     private var hideWhenIdle = false
-    private var hideFrameWhenIdle = false
-    private var showDesktopFrame = true
+    private var desktopFrameMode = DesktopFrameMode.always
     private var useVibrantColors = false
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
@@ -19,9 +18,7 @@ final class OverlayController {
         windows.forEach {
             $0.overlayView.setHideWhenIdle(
                 hideWhenIdle, currentlyIdle: isIdle, animated: false)
-            $0.overlayView.setHideFrameWhenIdle(
-                hideFrameWhenIdle, currentlyIdle: isIdle, animated: false)
-            $0.overlayView.setShowDesktopFrame(showDesktopFrame)
+            $0.overlayView.setDesktopFrameMode(desktopFrameMode)
             $0.overlayView.setUseVibrantColors(useVibrantColors)
             $0.overlayView.setSongInfoVisibility(songInfoVisibility)
             $0.overlayView.setSongInfoPosition(songInfoPosition)
@@ -53,17 +50,9 @@ final class OverlayController {
         }
     }
 
-    func setHideFrameWhenIdle(_ enabled: Bool) {
-        hideFrameWhenIdle = enabled
-        for window in windows {
-            window.overlayView.setHideFrameWhenIdle(
-                enabled, currentlyIdle: isIdle, animated: true)
-        }
-    }
-
-    func setShowDesktopFrame(_ enabled: Bool) {
-        showDesktopFrame = enabled
-        windows.forEach { $0.overlayView.setShowDesktopFrame(enabled) }
+    func setDesktopFrameMode(_ mode: DesktopFrameMode) {
+        desktopFrameMode = mode
+        windows.forEach { $0.overlayView.setDesktopFrameMode(mode) }
     }
 
     func setUseVibrantColors(_ enabled: Bool) {

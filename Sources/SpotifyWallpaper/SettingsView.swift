@@ -86,12 +86,17 @@ struct SettingsView: View {
                         get: { model.useVibrantColors },
                         set: { model.setUseVibrantColors($0) }))
                 Divider()
-                SettingToggle(
-                    title: "Show the black desktop frame",
-                    description: "Adds the black top strip and rounded corner masks. When enabled, the frame is always shown during playback.",
-                    isOn: Binding(
-                        get: { model.showDesktopFrame },
-                        set: { model.setShowDesktopFrame($0) }))
+                SettingChoice(
+                    title: "Black desktop frame",
+                    description: "Controls the black top strip and rounded corner masks.",
+                    selection: Binding(
+                        get: { model.desktopFrameMode },
+                        set: { model.setDesktopFrameMode($0) }),
+                    choices: [
+                        ("Always", .always),
+                        ("Never", .never),
+                        ("When a song is playing", .whenPlaying),
+                    ])
             }
         }
     }
@@ -156,24 +161,12 @@ struct SettingsView: View {
             title: "When Playback Stops",
             subtitle: "Choose what remains visible while Spotify is idle.",
             systemImage: "stop.circle") {
-            VStack(spacing: 13) {
-                SettingToggle(
-                    title: "Hide the now-playing artwork",
-                    description: "Slides the artwork away until playback resumes.",
-                    isOn: Binding(
-                        get: { model.hideOverlayWhenIdle },
-                        set: { model.setHideOverlayWhenIdle($0) }))
-                Divider()
-                SettingToggle(
-                    title: "Hide the desktop frame too",
-                    description: "Also hides the black top strip and rounded corners.",
-                    isOn: Binding(
-                        get: { model.hideFrameWhenIdle },
-                        set: { model.setHideFrameWhenIdle($0) }),
-                    isEnabled:
-                        model.hideOverlayWhenIdle && model.showDesktopFrame,
-                    isNested: true)
-            }
+            SettingToggle(
+                title: "Hide the now-playing artwork",
+                description: "Slides the artwork away until playback resumes.",
+                isOn: Binding(
+                    get: { model.hideOverlayWhenIdle },
+                    set: { model.setHideOverlayWhenIdle($0) }))
         }
     }
 
@@ -414,10 +407,14 @@ private struct DesktopPreview: View {
     }
 
     private var frameVisible: Bool {
-        model.showDesktopFrame &&
-        !(isStoppedPreview &&
-          model.hideOverlayWhenIdle &&
-          model.hideFrameWhenIdle)
+        switch model.desktopFrameMode {
+        case .always:
+            return true
+        case .never:
+            return false
+        case .whenPlaying:
+            return !isStoppedPreview
+        }
     }
 
     private var previewStateLabel: String {
@@ -427,17 +424,27 @@ private struct DesktopPreview: View {
     private var previewCaption: String {
         switch model.selectedSettingsPage {
         case .display:
-            return model.showDesktopFrame
-                ? "Media, color, and the black desktop frame update with your choices."
-                : "The black top strip and rounded corner masks are disabled."
+            switch model.desktopFrameMode {
+            case .always:
+                return "The black top strip and rounded corners remain at all times."
+            case .never:
+                return "The black top strip and rounded corner masks are disabled."
+            case .whenPlaying:
+                return "The black frame appears during playback and hides when Spotify stops."
+            }
         case .songInfo:
             return model.songInfoVisibility == .never
                 ? "Song information is hidden."
                 : "The sample title shows the selected position and text size."
         case .playback:
-            return frameVisible
-                ? "The black desktop frame remains after the artwork retreats."
-                : "The artwork and desktop frame retreat together."
+            switch model.desktopFrameMode {
+            case .always:
+                return "The black desktop frame remains after the artwork retreats."
+            case .whenPlaying:
+                return "The artwork and black desktop frame retreat together."
+            case .never:
+                return "The black desktop frame is disabled."
+            }
         case .missionControl:
             return model.bakeInMissionControl
                 ? "The app temporarily uses this composition as each Space's wallpaper."

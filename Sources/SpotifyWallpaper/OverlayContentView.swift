@@ -47,8 +47,7 @@ final class OverlayContentView: NSView {
     /// The track currently shown, so we only play the reveal animation on a genuinely new one.
     private var shownTrackID: String?
     private var hideWhenIdle = false
-    private var hideFrameWhenIdle = false
-    private var showDesktopFrame = true
+    private var desktopFrameMode = DesktopFrameMode.always
     private var useVibrantColors = false
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
@@ -294,10 +293,11 @@ final class OverlayContentView: NSView {
         let wasIdle = isIdle
         let isNewTrack = track.id != shownTrackID
         let revealWholeOverlay =
-            hideWhenIdle && hideFrameWhenIdle &&
+            hideWhenIdle && desktopFrameMode == .whenPlaying &&
             (wasIdle || layer?.isHidden == true)
         isIdle = false
         layer?.isHidden = false
+        applyFrameVisibility()
 
         // A Canvas URL arrives as a second update for the same track. It must not cancel
         // a reveal or slide that the cover update has already started.
@@ -538,6 +538,7 @@ final class OverlayContentView: NSView {
         } else {
             contentLayer.isHidden = true
             stopCanvas()
+            applyFrameVisibility()
         }
     }
 
@@ -554,6 +555,7 @@ final class OverlayContentView: NSView {
             layer?.isHidden = false
             layer?.mask = nil
             contentLayer.mask = nil
+            applyFrameVisibility()
             return
         }
 
@@ -564,39 +566,33 @@ final class OverlayContentView: NSView {
             layer?.isHidden = false
             contentLayer.isHidden = true
             stopCanvas()
+            applyFrameVisibility()
         }
     }
 
-    func setHideFrameWhenIdle(
-        _ enabled: Bool,
-        currentlyIdle: Bool,
-        animated: Bool
-    ) {
-        hideFrameWhenIdle = enabled
-        isIdle = currentlyIdle
+    func setDesktopFrameMode(_ mode: DesktopFrameMode) {
+        desktopFrameMode = mode
         visibilityGeneration += 1
         layer?.mask = nil
         contentLayer.mask = nil
-
-        guard currentlyIdle, hideWhenIdle else {
-            layer?.isHidden = false
-            return
-        }
-
-        if enabled {
-            hideIdleLayers(animated: animated)
-        } else {
-            layer?.isHidden = false
-            contentLayer.isHidden = true
-        }
+        layer?.isHidden = false
+        applyFrameVisibility()
     }
 
-    func setShowDesktopFrame(_ enabled: Bool) {
-        showDesktopFrame = enabled
+    private func applyFrameVisibility() {
+        let visible: Bool
+        switch desktopFrameMode {
+        case .always:
+            visible = true
+        case .never:
+            visible = false
+        case .whenPlaying:
+            visible = !isIdle
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        barLayer.isHidden = !enabled
-        cornerLayer.isHidden = !enabled
+        barLayer.isHidden = !visible
+        cornerLayer.isHidden = !visible
         CATransaction.commit()
     }
 
@@ -613,13 +609,19 @@ final class OverlayContentView: NSView {
         guard let root = layer else { return }
         root.isHidden = false
 
-        let target = hideFrameWhenIdle ? root : contentLayer
+        let hidesWholeOverlay = desktopFrameMode == .whenPlaying
+        if !hidesWholeOverlay {
+            applyFrameVisibility()
+        }
+        let target = hidesWholeOverlay ? root : contentLayer
         if animated, !target.isHidden {
-            animateRetreat(masking: target, hidesWholeOverlay: hideFrameWhenIdle)
+            animateRetreat(
+                masking: target,
+                hidesWholeOverlay: hidesWholeOverlay)
         } else {
             target.mask = nil
             contentLayer.isHidden = true
-            root.isHidden = hideFrameWhenIdle
+            root.isHidden = hidesWholeOverlay
         }
     }
 
@@ -696,7 +698,8 @@ final class OverlayContentView: NSView {
                   self.visibilityGeneration == generation,
                   self.isIdle,
                   self.hideWhenIdle,
-                  self.hideFrameWhenIdle == hidesWholeOverlay else { return }
+                  (self.desktopFrameMode == .whenPlaying) ==
+                    hidesWholeOverlay else { return }
             target.mask = nil
             self.contentLayer.isHidden = true
             target.isHidden = true
