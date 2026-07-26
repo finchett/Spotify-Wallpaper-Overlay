@@ -49,6 +49,9 @@ final class OverlayContentView: NSView {
     private var hideWhenIdle = false
     private var hideFrameWhenIdle = false
     private var useVibrantColors = false
+    private var songInfoVisibility = SongInfoVisibility.briefly
+    private var songInfoPosition = SongInfoPosition.bottomLeft
+    private var songInfoSize = SongInfoSize.standard
     private var isIdle = true
     private var visibilityGeneration = 0
     private var textHideWorkItem: DispatchWorkItem?
@@ -164,6 +167,10 @@ final class OverlayContentView: NSView {
         layer.alignmentMode = .left
         layer.truncationMode = .end
         layer.isWrapped = false
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.45
+        layer.shadowRadius = 5
+        layer.shadowOffset = CGSize(width: 0, height: -1)
     }
 
     // MARK: - Layout
@@ -212,17 +219,65 @@ final class OverlayContentView: NSView {
         cardShadowLayer.shadowRadius = minSide * 0.06
         cardShadowLayer.shadowOffset = CGSize(width: 0, height: -minSide * 0.02)
 
-        // Title + artist, bottom-left.
+        // Title + artist, positioned and scaled according to the user's display choices.
         let margin = b.width * 0.045
-        let titleSize = max(22, b.height * 0.032)
-        let artistSize = max(15, b.height * 0.020)
-        let artistY = b.height * 0.06
+        let sizeScale: CGFloat
+        switch songInfoSize {
+        case .small: sizeScale = 0.70
+        case .standard: sizeScale = 1.0
+        case .large: sizeScale = 1.30
+        }
+        let titleSize = max(15, b.height * 0.032 * sizeScale)
+        let artistSize = max(11, b.height * 0.020 * sizeScale)
+        let titleHeight = titleSize * 1.4
+        let artistHeight = artistSize * 1.4
+        let gap = artistSize * 0.2
+        let blockHeight = titleHeight + gap + artistHeight
+        let contentTop = b.height - barHeight
+
+        let textWidth: CGFloat
+        let textX: CGFloat
+        let artistY: CGFloat
+        let alignment: CATextLayerAlignmentMode
+        switch songInfoPosition {
+        case .bottomLeft:
+            textWidth = b.width * 0.46
+            textX = margin
+            artistY = b.height * 0.06
+            alignment = .left
+        case .bottomRight:
+            textWidth = b.width * 0.46
+            textX = b.width - margin - textWidth
+            artistY = b.height * 0.06
+            alignment = .right
+        case .topLeft:
+            textWidth = b.width * 0.46
+            textX = margin
+            artistY = contentTop - margin - blockHeight
+            alignment = .left
+        case .topRight:
+            textWidth = b.width * 0.46
+            textX = b.width - margin - textWidth
+            artistY = contentTop - margin - blockHeight
+            alignment = .right
+        case .center:
+            textWidth = b.width * 0.80
+            textX = b.width * 0.10
+            artistY = (contentTop - blockHeight) / 2
+            alignment = .center
+        }
+
         applyFont(titleLayer, size: titleSize, weight: .bold, scale: s)
         applyFont(artistLayer, size: artistSize, weight: .medium, scale: s)
-        artistLayer.frame = CGRect(x: margin, y: artistY,
-                                   width: b.width - margin * 2, height: artistSize * 1.4)
-        titleLayer.frame = CGRect(x: margin, y: artistY + artistSize * 1.6,
-                                  width: b.width - margin * 2, height: titleSize * 1.4)
+        titleLayer.alignmentMode = alignment
+        artistLayer.alignmentMode = alignment
+        artistLayer.frame = CGRect(
+            x: textX, y: artistY, width: textWidth, height: artistHeight)
+        titleLayer.frame = CGRect(
+            x: textX,
+            y: artistY + artistHeight + gap,
+            width: textWidth,
+            height: titleHeight)
     }
 
     private func applyFont(_ layer: CATextLayer, size: CGFloat, weight: NSFont.Weight, scale: CGFloat) {
@@ -275,7 +330,7 @@ final class OverlayContentView: NSView {
         shownTrackID = track.id
         contentLayer.isHidden = false
         if wasIdle || isNewTrack {
-            showTextTemporarily()
+            applySongInfoVisibility()
         }
         // First appearance / resuming from idle gets the circular fill; a song switch
         // slides old→off and new→in; a Canvas upgrade of the same track gets nothing.
@@ -419,6 +474,53 @@ final class OverlayContentView: NSView {
         }
         textHideWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: work)
+    }
+
+    private func applySongInfoVisibility() {
+        textHideWorkItem?.cancel()
+        textHideWorkItem = nil
+        titleLayer.removeAnimation(forKey: "delayed-text-fade")
+        artistLayer.removeAnimation(forKey: "delayed-text-fade")
+
+        switch songInfoVisibility {
+        case .briefly:
+            showTextTemporarily()
+        case .always:
+            setTextOpacity(1)
+        case .never:
+            setTextOpacity(0)
+        }
+    }
+
+    private func setTextOpacity(_ opacity: Float) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        titleLayer.opacity = opacity
+        artistLayer.opacity = opacity
+        CATransaction.commit()
+    }
+
+    func setSongInfoVisibility(_ visibility: SongInfoVisibility) {
+        songInfoVisibility = visibility
+        guard !isIdle else { return }
+        applySongInfoVisibility()
+    }
+
+    func setSongInfoPosition(_ position: SongInfoPosition) {
+        songInfoPosition = position
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    func setSongInfoSize(_ size: SongInfoSize) {
+        songInfoSize = size
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    func revealSongInfo() {
+        guard !isIdle, songInfoVisibility != .always else { return }
+        showTextTemporarily()
     }
 
     /// Nothing playing: either retreat the whole overlay into the bottom-left corner or

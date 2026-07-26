@@ -1,7 +1,8 @@
 import Combine
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case appearance
+    case display
+    case songInfo
     case playback
     case missionControl
     case app
@@ -10,7 +11,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .appearance: return "Appearance"
+        case .display: return "Display"
+        case .songInfo: return "Song Info"
         case .playback: return "Playback"
         case .missionControl: return "Mission Control"
         case .app: return "App"
@@ -30,7 +32,12 @@ final class AppModel: ObservableObject {
     @Published var hideOverlayWhenIdle = false
     @Published var hideFrameWhenIdle = false
     @Published var useVibrantColors = false
-    @Published var selectedSettingsPage = SettingsPage.appearance
+    @Published var mediaDisplayMode = MediaDisplayMode.canvasWhenAvailable
+    @Published var songInfoVisibility = SongInfoVisibility.briefly
+    @Published var songInfoPosition = SongInfoPosition.bottomLeft
+    @Published var songInfoSize = SongInfoSize.standard
+    @Published var clickToRevealSongInfo = false
+    @Published var selectedSettingsPage = SettingsPage.display
 
     var loginAction: () -> Void = {}
     var setLaunchAtLogin: (Bool) -> Void = { _ in }
@@ -40,4 +47,9 @@ final class AppModel: ObservableObject {
     var setHideOverlayWhenIdle: (Bool) -> Void = { _ in }
     var setHideFrameWhenIdle: (Bool) -> Void = { _ in }
     var setUseVibrantColors: (Bool) -> Void = { _ in }
+    var setMediaDisplayMode: (MediaDisplayMode) -> Void = { _ in }
+    var setSongInfoVisibility: (SongInfoVisibility) -> Void = { _ in }
+    var setSongInfoPosition: (SongInfoPosition) -> Void = { _ in }
+    var setSongInfoSize: (SongInfoSize) -> Void = { _ in }
+    var setClickToRevealSongInfo: (Bool) -> Void = { _ in }
 }

@@ -6,6 +6,9 @@ final class OverlayController {
     private var hideWhenIdle = false
     private var hideFrameWhenIdle = false
     private var useVibrantColors = false
+    private var songInfoVisibility = SongInfoVisibility.briefly
+    private var songInfoPosition = SongInfoPosition.bottomLeft
+    private var songInfoSize = SongInfoSize.standard
     private var isIdle = true
 
     /// (Re)create a window for every current screen. Safe to call on hot-plug / resolution change.
@@ -18,6 +21,9 @@ final class OverlayController {
             $0.overlayView.setHideFrameWhenIdle(
                 hideFrameWhenIdle, currentlyIdle: isIdle, animated: false)
             $0.overlayView.setUseVibrantColors(useVibrantColors)
+            $0.overlayView.setSongInfoVisibility(songInfoVisibility)
+            $0.overlayView.setSongInfoPosition(songInfoPosition)
+            $0.overlayView.setSongInfoSize(songInfoSize)
         }
         windows.forEach { $0.orderFrontRegardless() }
     }
@@ -58,6 +64,25 @@ final class OverlayController {
         for window in windows {
             window.overlayView.setUseVibrantColors(enabled)
         }
+    }
+
+    func setSongInfoVisibility(_ visibility: SongInfoVisibility) {
+        songInfoVisibility = visibility
+        windows.forEach { $0.overlayView.setSongInfoVisibility(visibility) }
+    }
+
+    func setSongInfoPosition(_ position: SongInfoPosition) {
+        songInfoPosition = position
+        windows.forEach { $0.overlayView.setSongInfoPosition(position) }
+    }
+
+    func setSongInfoSize(_ size: SongInfoSize) {
+        songInfoSize = size
+        windows.forEach { $0.overlayView.setSongInfoSize(size) }
+    }
+
+    func revealSongInfo() {
+        windows.forEach { $0.overlayView.revealSongInfo() }
     }
 
     /// Re-assert the windows (e.g. on a Space change) to reduce transition flicker.

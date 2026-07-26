@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingWallpaperBake: DispatchWorkItem?
     private var pendingIdleRetreat: DispatchWorkItem?
     private var signalSources: [DispatchSourceSignal] = []
+    private var desktopClickMonitor: Any?
     private var isShuttingDown = false
     private var isPollInFlight = false
     private let artworkCache = NSCache<NSString, NSImage>()
@@ -45,6 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.hideOverlayWhenIdle = Settings.hideOverlayWhenIdle
         model.hideFrameWhenIdle = Settings.hideFrameWhenIdle
         model.useVibrantColors = Settings.useVibrantColors
+        model.mediaDisplayMode = Settings.mediaDisplayMode
+        model.songInfoVisibility = Settings.songInfoVisibility
+        model.songInfoPosition = Settings.songInfoPosition
+        model.songInfoSize = Settings.songInfoSize
+        model.clickToRevealSongInfo = Settings.clickToRevealSongInfo
         model.loginAction = { [weak self] in self?.presentLogin() }
         model.setLaunchAtLogin = { [weak self] on in self?.applyLaunchAtLogin(on) }
         model.setShowMenuBarIcon = { [weak self] on in self?.applyMenuBarVisibility(on) }
@@ -61,6 +67,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.setUseVibrantColors = { [weak self] on in
             self?.applyUseVibrantColors(on)
         }
+        model.setMediaDisplayMode = { [weak self] mode in
+            self?.applyMediaDisplayMode(mode)
+        }
+        model.setSongInfoVisibility = { [weak self] visibility in
+            self?.applySongInfoVisibility(visibility)
+        }
+        model.setSongInfoPosition = { [weak self] position in
+            self?.applySongInfoPosition(position)
+        }
+        model.setSongInfoSize = { [weak self] size in
+            self?.applySongInfoSize(size)
+        }
+        model.setClickToRevealSongInfo = { [weak self] on in
+            self?.applyClickToRevealSongInfo(on)
+        }
 
         setupMenuBar(enabled: model.showMenuBarIcon)
         // Show the window on launch only when there's a Dock icon; in background-agent mode
@@ -70,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.setHideWhenIdle(model.hideOverlayWhenIdle)
         overlay.setHideFrameWhenIdle(model.hideFrameWhenIdle)
         overlay.setUseVibrantColors(model.useVibrantColors)
+        overlay.setSongInfoVisibility(model.songInfoVisibility)
+        overlay.setSongInfoPosition(model.songInfoPosition)
+        overlay.setSongInfoSize(model.songInfoSize)
         overlay.rebuildForScreens()
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
@@ -83,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.willPowerOffNotification, object: nil)
 
         installSignalHandlers()
+        installDesktopClickMonitor()
         startPolling()
     }
 
@@ -96,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer?.invalidate()
         pendingWallpaperBake?.cancel()
         pendingIdleRetreat?.cancel()
+        if let desktopClickMonitor {
+            NSEvent.removeMonitor(desktopClickMonitor)
+            self.desktopClickMonitor = nil
+        }
         wallpaperBaker.restore()
     }
 
@@ -228,6 +257,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleWallpaperBake()
     }
 
+    private func applyMediaDisplayMode(_ mode: MediaDisplayMode) {
+        Settings.mediaDisplayMode = mode
+        model.mediaDisplayMode = mode
+        guard !isIdle, let track = lastTrack, let cover = lastCover else { return }
+        overlay.update(
+            track: track,
+            cover: cover,
+            canvasURL: mode == .canvasWhenAvailable ? lastCanvasURL : nil)
+        scheduleWallpaperBake()
+    }
+
+    private func applySongInfoVisibility(_ visibility: SongInfoVisibility) {
+        Settings.songInfoVisibility = visibility
+        model.songInfoVisibility = visibility
+        overlay.setSongInfoVisibility(visibility)
+    }
+
+    private func applySongInfoPosition(_ position: SongInfoPosition) {
+        Settings.songInfoPosition = position
+        model.songInfoPosition = position
+        overlay.setSongInfoPosition(position)
+    }
+
+    private func applySongInfoSize(_ size: SongInfoSize) {
+        Settings.songInfoSize = size
+        model.songInfoSize = size
+        overlay.setSongInfoSize(size)
+    }
+
+    private func applyClickToRevealSongInfo(_ on: Bool) {
+        Settings.clickToRevealSongInfo = on
+        model.clickToRevealSongInfo = on
+    }
+
+    private func installDesktopClickMonitor() {
+        desktopClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .leftMouseDown
+        ) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                guard let self,
+                      self.model.clickToRevealSongInfo,
+                      !self.isIdle,
+                      NSWorkspace.shared.frontmostApplication?.bundleIdentifier ==
+                        "com.apple.finder",
+                      !self.pointerIsInsideFinderWindow() else { return }
+                self.overlay.revealSongInfo()
+            }
+        }
+    }
+
+    /// Finder owns both ordinary windows and the desktop. A desktop click brings Finder
+    /// forward; excluding its layer-zero windows leaves the desktop and its icons.
+    private func pointerIsInsideFinderWindow() -> Bool {
+        let cocoaPoint = NSEvent.mouseLocation
+        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let quartzPoint = CGPoint(
+            x: cocoaPoint.x,
+            y: mainHeight - cocoaPoint.y)
+        guard let windows = CGWindowListCopyWindowInfo(
+            .optionOnScreenOnly,
+            kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        return windows.contains { info in
+            guard (info[kCGWindowOwnerName as String] as? String) == "Finder",
+                  let layer = info[kCGWindowLayer as String] as? Int,
+                  layer >= 0,
+                  let boundsValue = info[kCGWindowBounds as String],
+                  let bounds = CGRect(
+                    dictionaryRepresentation: boundsValue as! CFDictionary)
+            else { return false }
+            return bounds.contains(quartzPoint)
+        }
+    }
+
     @objc private func openSettings() { showSettingsWindow() }
 
     // MARK: - Launch at login
@@ -286,7 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if isIdle {
             overlay.showIdle()
         } else if let track = lastTrack, let cover = lastCover {
-            overlay.update(track: track, cover: cover, canvasURL: lastCanvasURL)
+            overlay.update(
+                track: track,
+                cover: cover,
+                canvasURL: model.mediaDisplayMode == .canvasWhenAvailable
+                    ? lastCanvasURL : nil)
             scheduleWallpaperBake()
         }
     }
@@ -389,7 +497,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Resuming the same track should not wait for metadata or artwork again.
         if let track = lastTrack, track.id == trackID, let cover = lastCover {
             setStatus("\(track.title) — \(track.artist)")
-            overlay.update(track: track, cover: cover, canvasURL: lastCanvasURL)
+            overlay.update(
+                track: track,
+                cover: cover,
+                canvasURL: model.mediaDisplayMode == .canvasWhenAvailable
+                    ? lastCanvasURL : nil)
             scheduleWallpaperBake()
             return
         }
@@ -434,6 +546,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.pendingCanvas = (np.id, canvasURL)
                 guard self.lastTrack?.id == np.id, let cover = self.lastCover else { return }
                 self.lastCanvasURL = canvasURL
+                guard self.model.mediaDisplayMode == .canvasWhenAvailable else {
+                    return
+                }
                 self.overlay.update(track: np, cover: cover, canvasURL: canvasURL)
             }
         }
@@ -445,7 +560,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastTrack = track
         lastCover = cover
         lastCanvasURL = canvasURL
-        overlay.update(track: track, cover: cover, canvasURL: canvasURL)
+        overlay.update(
+            track: track,
+            cover: cover,
+            canvasURL: model.mediaDisplayMode == .canvasWhenAvailable
+                ? canvasURL : nil)
         scheduleWallpaperBake()
     }
 }

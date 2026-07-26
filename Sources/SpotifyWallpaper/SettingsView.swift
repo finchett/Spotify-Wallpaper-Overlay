@@ -14,7 +14,7 @@ struct SettingsView: View {
             selectedSettings
         }
         .padding(24)
-        .frame(width: 440, height: 590, alignment: .top)
+        .frame(width: 440, height: 650, alignment: .top)
     }
 
     private var header: some View {
@@ -87,8 +87,10 @@ struct SettingsView: View {
     @ViewBuilder
     private var selectedSettings: some View {
         switch model.selectedSettingsPage {
-        case .appearance:
-            appearanceSettings
+        case .display:
+            displaySettings
+        case .songInfo:
+            songInfoSettings
         case .playback:
             playbackSettings
         case .missionControl:
@@ -98,17 +100,85 @@ struct SettingsView: View {
         }
     }
 
-    private var appearanceSettings: some View {
+    private var displaySettings: some View {
         SettingsPanel(
-            title: "Appearance",
-            subtitle: "Choose how the overlay looks.",
-            systemImage: "paintpalette") {
-            SettingToggle(
-                title: "Boost album colors",
-                description: "Makes artwork backgrounds brighter and more saturated.",
-                isOn: Binding(
-                    get: { model.useVibrantColors },
-                    set: { model.setUseVibrantColors($0) }))
+            title: "Display",
+            subtitle: "Choose what the main artwork looks like.",
+            systemImage: "rectangle.on.rectangle") {
+            VStack(spacing: 13) {
+                SettingChoice(
+                    title: "Main artwork",
+                    description: "Canvas falls back to album artwork when a video is unavailable.",
+                    selection: Binding(
+                        get: { model.mediaDisplayMode },
+                        set: { model.setMediaDisplayMode($0) }),
+                    choices: [
+                        ("Canvas when available", .canvasWhenAvailable),
+                        ("Album artwork only", .artworkOnly),
+                    ])
+                Divider()
+                SettingToggle(
+                    title: "Boost album colors",
+                    description: "Makes artwork backgrounds brighter and more saturated.",
+                    isOn: Binding(
+                        get: { model.useVibrantColors },
+                        set: { model.setUseVibrantColors($0) }))
+            }
+        }
+    }
+
+    private var songInfoSettings: some View {
+        SettingsPanel(
+            title: "Song Info",
+            subtitle: "Control when and where the title and artist appear.",
+            systemImage: "textformat") {
+            VStack(spacing: 13) {
+                SettingChoice(
+                    title: "Show song info",
+                    description: "Briefly shows it after play, pause, or a song change.",
+                    selection: Binding(
+                        get: { model.songInfoVisibility },
+                        set: { model.setSongInfoVisibility($0) }),
+                    choices: [
+                        ("Briefly", .briefly),
+                        ("Always", .always),
+                        ("Never", .never),
+                    ])
+                Divider()
+                SettingChoice(
+                    title: "Position",
+                    description: "Places the title and artist around the main display.",
+                    selection: Binding(
+                        get: { model.songInfoPosition },
+                        set: { model.setSongInfoPosition($0) }),
+                    choices: [
+                        ("Bottom left", .bottomLeft),
+                        ("Bottom right", .bottomRight),
+                        ("Top left", .topLeft),
+                        ("Top right", .topRight),
+                        ("Center", .center),
+                    ])
+                Divider()
+                SettingChoice(
+                    title: "Text size",
+                    description: "Adjusts both the song title and artist.",
+                    selection: Binding(
+                        get: { model.songInfoSize },
+                        set: { model.setSongInfoSize($0) }),
+                    choices: [
+                        ("Small", .small),
+                        ("Standard", .standard),
+                        ("Large", .large),
+                    ])
+                Divider()
+                SettingToggle(
+                    title: "Click the desktop to show song info",
+                    description: "Reveals it briefly without interrupting your desktop click.",
+                    isOn: Binding(
+                        get: { model.clickToRevealSongInfo },
+                        set: { model.setClickToRevealSongInfo($0) }),
+                    isEnabled: model.songInfoVisibility != .always)
+            }
         }
     }
 
@@ -236,6 +306,34 @@ private struct SettingToggle: View {
         .padding(.leading, isNested ? 18 : 0)
         .opacity(isEnabled ? 1 : 0.45)
         .disabled(!isEnabled)
+    }
+}
+
+private struct SettingChoice<Value: Hashable>: View {
+    let title: String
+    let description: String
+    @Binding var selection: Value
+    let choices: [(String, Value)]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 10)
+            Picker("", selection: $selection) {
+                ForEach(choices.indices, id: \.self) { index in
+                    Text(choices[index].0).tag(choices[index].1)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 170)
+        }
     }
 }
 
