@@ -21,9 +21,8 @@ Space without intercepting clicks.
   clicking the desktop.
 - **Playback-aware behavior** — animate the artwork away when Spotify stops and
   independently control the black menu-bar strip and rounded-corner masks.
-- **Mission Control workaround** — optionally snapshot the composition into
-  each Space's wallpaper during playback, then restore the original wallpaper
-  when playback stops or the app quits.
+- **Smooth Spaces and Mission Control** — optionally keep the current
+  composition visible while switching desktops.
 - **Native Mac conveniences** — launch at login, with optional menu-bar and Dock
   icons.
 
@@ -39,69 +38,15 @@ curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/
 open -a SpotifyWallpaper
 ```
 
-The installer downloads the latest universal release to `~/Applications`,
-verifies its published SHA-256 checksum, and replaces an older installation
-safely. Run the same command again to update.
+Run the same install command again whenever you want to update.
 
-On first launch, allow the Automation requests for **System Events** and
-**Spotify**. SpotifyWallpaper reads the current track from the local Spotify
-app; no Spotify developer project or API key is required.
+## Getting started
 
-Releases are ad-hoc signed rather than Apple-notarized. The installer verifies
-the checksum and clears the command-line download's quarantine attribute before
-installation.
+1. Open SpotifyWallpaper and allow the Automation requests for **System Events**
+   and **Spotify**.
+2. Start playing something in Spotify.
+3. Open SpotifyWallpaper's settings from the menu-bar icon to customize the
+   artwork, background, song info, playback behavior, and launch-at-login.
 
-To install somewhere else:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh \
-  | SPOTIFY_WALLPAPER_INSTALL_DIR=/Applications bash
-```
-
-## Build from source
-
-Install the Swift toolchain with `xcode-select --install` or full Xcode, then:
-
-```bash
-git clone https://github.com/finchett/Spotify-Wallpaper-Overlay.git
-cd Spotify-Wallpaper-Overlay
-swift run
-```
-
-For the packaged app:
-
-```bash
-./package.sh --install
-open -a SpotifyWallpaper
-```
-
-To create the universal ZIP and checksum used by a release:
-
-```bash
-./package.sh --version 1.0.0 --universal --archive
-```
-
-The packaged bundle is recommended for the WebView login and stable Automation
-permissions.
-
-## How it works
-
-| Component | Role |
-|---|---|
-| `AppDelegate.swift` | Menu bar, playback polling, and overlay coordination |
-| `SpotifyClient.swift` | Current-track metadata from Spotify via AppleScript |
-| `CanvasClient.swift` | Canvas lookup and automatic cover fallback |
-| `OverlayController.swift` | One overlay window per display |
-| `OverlayWindow.swift` | Click-through, all-Spaces desktop-level window |
-| `OverlayContentView.swift` | Canvas, cover animation, song info, and desktop framing |
-| `WallpaperBaker.swift` | Crash-recoverable Mission Control wallpaper workaround |
-| `ColorExtractor.swift` | Cover-derived background color palette |
-
-## Spotify Canvas note
-
-Canvas is not a public Spotify API. The lookup uses an anonymous web token and
-an internal protobuf endpoint, so Spotify can change or disable it without
-notice. Failures are silent and always fall back to album artwork.
-
-Overlay constants such as the menu-bar height and corner radius live at the top
-of `OverlayContentView.swift`.
+That's it—SpotifyWallpaper runs quietly in the background and follows the local
+Spotify app. No Spotify developer project or API key is required.
