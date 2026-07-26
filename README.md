@@ -1,114 +1,107 @@
 # SpotifyWallpaper
 
-A macOS app that turns your desktop into an ambient "now playing" canvas. It runs
-a transparent, click-through window pinned just above the wallpaper and below
-every app window, so it shows through on **every Space** automatically. Whenever
-the song changes it shows:
+Turn the macOS desktop into an ambient now-playing display. SpotifyWallpaper
+sits above the wallpaper and below every app, following your music across every
+Space without intercepting clicks.
 
-- the real **Spotify Canvas** looping video, when one is available, or
-- a self-animated fallback: vibrant dominant-color gradient + centered album
-  card with a slow Ken Burns zoom.
+![SpotifyWallpaper changing the desktop artwork and colors with the current track](assets/demo.webp)
 
-Plus your standard treatment: a black menu-bar bar and black rounded corners.
+## Features
 
-It's controlled from a small settings window (Spotify login, launch-at-login,
-and an optional menu-bar icon).
+- **Spotify Canvas or album artwork** — play a track's looping Canvas when one
+  is available, or use an animated album-cover fallback with a slow Ken Burns
+  effect.
+- **Adaptive backgrounds** — build a gradient from the cover, keep your current
+  wallpaper, or choose a separate image. Tune color intensity, blur, and
+  brightness.
+- **Every Space, no interaction cost** — the click-through overlay stays at the
+  desktop level across macOS Spaces.
+- **Custom song info** — show the title and artist briefly, permanently, or
+  never; choose the corner, center position, and text size; or reveal it by
+  clicking the desktop.
+- **Playback-aware behavior** — animate the artwork away when Spotify stops and
+  independently control the black menu-bar strip and rounded-corner masks.
+- **Mission Control workaround** — optionally snapshot the composition into
+  each Space's wallpaper during playback, then restore the original wallpaper
+  when playback stops or the app quits.
+- **Native Mac conveniences** — launch at login, with optional menu-bar and Dock
+  icons.
 
-An optional **Bake overlay during playback** setting snapshots the overlay
-into the all-Spaces wallpaper once when playback starts or the track changes.
-It restores the exact original wallpaper configuration when playback stops,
-the setting is disabled, the app quits, or a previous run was interrupted.
+Canvas is not available for every track. When it is missing or cannot be loaded,
+SpotifyWallpaper falls back automatically to the animated cover treatment.
 
-An optional **Hide overlay when nothing is playing** setting runs the circular
-reveal animation backwards when playback stops. The now-playing content retreats
-while the black top strip and rounded corners remain; a nested option can hide
-that black framing too.
+## Install
 
-An optional **Use vibrant colors** setting keeps the cover-derived hue but raises
-the gradient's saturation and upper brightness for a more vivid background.
-
-## Requirements
-
-- macOS 13+
-- Swift toolchain (`xcode-select --install` or full Xcode)
-- The **Spotify desktop app** running (metadata is read from the local app)
-
-## Build & run
-
-```bash
-cd SpotifyWallpaper
-swift run
-```
-
-The settings window opens. Start playing something and the desktop updates
-within a few seconds. First run prompts for Automation permission to control
-**System Events** and **Spotify** — allow both. (The WebView login and reliable
-permissions really want the packaged app below rather than `swift run`.)
-
-## Install (recommended)
-
-Download the latest release, verify its checksum, and install it to
-`~/Applications`:
+Requires macOS 13 or later and the Spotify desktop app.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh | bash
 open -a SpotifyWallpaper
 ```
 
-Then, in the settings window, turn on **Launch at login** — it'll start
-automatically on every boot (also visible in System Settings → General → Login
-Items). The menu-bar icon is optional via the toggle beside it.
+The installer downloads the latest universal release to `~/Applications`,
+verifies its published SHA-256 checksum, and replaces an older installation
+safely. Run the same command again to update.
 
-The release is ad-hoc signed rather than Apple-notarized. The installer verifies
-the published SHA-256 checksum and clears the download quarantine before installing
-the app. On first launch, macOS will ask for Automation permission to control
-**System Events** and **Spotify**; allow both.
+On first launch, allow the Automation requests for **System Events** and
+**Spotify**. SpotifyWallpaper reads the current track from the local Spotify
+app; no Spotify developer project or API key is required.
 
-To update later, run the same curl command again. To choose another destination:
+Releases are ad-hoc signed rather than Apple-notarized. The installer verifies
+the checksum and clears the command-line download's quarantine attribute before
+installation.
+
+To install somewhere else:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh \
   | SPOTIFY_WALLPAPER_INSTALL_DIR=/Applications bash
 ```
 
-## Package from source
+## Build from source
 
-Build the `.app` bundle locally and install it to `/Applications`:
+Install the Swift toolchain with `xcode-select --install` or full Xcode, then:
+
+```bash
+git clone https://github.com/finchett/Spotify-Wallpaper-Overlay.git
+cd Spotify-Wallpaper-Overlay
+swift run
+```
+
+For the packaged app:
 
 ```bash
 ./package.sh --install
 open -a SpotifyWallpaper
 ```
 
-Create the ZIP and SHA-256 assets used by a GitHub release:
+To create the universal ZIP and checksum used by a release:
 
 ```bash
 ./package.sh --version 1.0.0 --universal --archive
 ```
 
-Packaging as a real bundle makes the WebView login and Automation permissions
-behave correctly, which they may not when run via bare `swift run`.
+The packaged bundle is recommended for the WebView login and stable Automation
+permissions.
 
-## Architecture
+## How it works
 
-| File | Role |
-|------|------|
-| `AppDelegate.swift` | Menu bar, 3s polling, drives the overlay |
-| `SpotifyClient.swift` | AppleScript → current track + static `artwork url` |
-| `CanvasClient.swift` | **Unofficial** Spotify Canvas lookup (token + hand-rolled protobuf) |
-| `OverlayController.swift` | One overlay window per screen |
-| `OverlayWindow.swift` | Desktop-level, click-through, all-Spaces window |
-| `OverlayContentView.swift` | Canvas video / animated cover, text, black bar + corners |
-| `WallpaperBaker.swift` | Optional crash-recoverable all-Spaces wallpaper transaction |
-| `ColorExtractor.swift` | Hue-bucketed vibrant color from the cover |
+| Component | Role |
+|---|---|
+| `AppDelegate.swift` | Menu bar, playback polling, and overlay coordination |
+| `SpotifyClient.swift` | Current-track metadata from Spotify via AppleScript |
+| `CanvasClient.swift` | Canvas lookup and automatic cover fallback |
+| `OverlayController.swift` | One overlay window per display |
+| `OverlayWindow.swift` | Click-through, all-Spaces desktop-level window |
+| `OverlayContentView.swift` | Canvas, cover animation, song info, and desktop framing |
+| `WallpaperBaker.swift` | Crash-recoverable Mission Control wallpaper workaround |
+| `ColorExtractor.swift` | Cover-derived background color palette |
 
-## Notes on Spotify Canvas
+## Spotify Canvas note
 
-Canvas is **not** a public API. `CanvasClient` scrapes an anonymous web token
-and POSTs a protobuf request to an internal endpoint. It can break whenever
-Spotify changes things (they've added bot-protection to the token endpoint),
-and many tracks simply have no Canvas. Any failure silently falls back to the
-animated cover, so the app always shows *something*.
+Canvas is not a public Spotify API. The lookup uses an anonymous web token and
+an internal protobuf endpoint, so Spotify can change or disable it without
+notice. Failures are silent and always fall back to album artwork.
 
-Overlay tuning lives at the top of `OverlayContentView.swift`
-(`menuBarHeightPixels`, `cornerRadiusPixels`).
+Overlay constants such as the menu-bar height and corner radius live at the top
+of `OverlayContentView.swift`.
