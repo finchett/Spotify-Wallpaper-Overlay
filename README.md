@@ -45,12 +45,13 @@ within a few seconds. First run prompts for Automation permission to control
 **System Events** and **Spotify** — allow both. (The WebView login and reliable
 permissions really want the packaged app below rather than `swift run`.)
 
-## Install as an app (recommended)
+## Install (recommended)
 
-Wrap the release build in a signed `.app` bundle and install it to `/Applications`:
+Download the latest release, verify its checksum, and install it to
+`~/Applications`:
 
 ```bash
-./package.sh --install
+curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh | bash
 open -a SpotifyWallpaper
 ```
 
@@ -58,10 +59,35 @@ Then, in the settings window, turn on **Launch at login** — it'll start
 automatically on every boot (also visible in System Settings → General → Login
 Items). The menu-bar icon is optional via the toggle beside it.
 
-Packaging as a real bundle also makes the WebView login and Automation permissions
-behave correctly, which they may not when run via bare `swift run`.
+The release is ad-hoc signed rather than Apple-notarized. The installer verifies
+the published SHA-256 checksum and clears the download quarantine before installing
+the app. On first launch, macOS will ask for Automation permission to control
+**System Events** and **Spotify**; allow both.
 
-To update later, rerun `./package.sh --install` (quit the app first).
+To update later, run the same curl command again. To choose another destination:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh \
+  | SPOTIFY_WALLPAPER_INSTALL_DIR=/Applications bash
+```
+
+## Package from source
+
+Build the `.app` bundle locally and install it to `/Applications`:
+
+```bash
+./package.sh --install
+open -a SpotifyWallpaper
+```
+
+Create the ZIP and SHA-256 assets used by a GitHub release:
+
+```bash
+./package.sh --version 1.0.0 --universal --archive
+```
+
+Packaging as a real bundle makes the WebView login and Automation permissions
+behave correctly, which they may not when run via bare `swift run`.
 
 ## Architecture
 
