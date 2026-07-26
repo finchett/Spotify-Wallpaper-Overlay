@@ -253,7 +253,8 @@ private struct SidebarButton: View {
             .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
             .foregroundStyle(isSelected ? Color.white : Color.primary)
             .padding(.horizontal, 10)
-            .frame(height: 32)
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .contentShape(Rectangle())
             .background(
                 isSelected ? Color.accentColor : Color.clear,
                 in: RoundedRectangle(cornerRadius: 7))
