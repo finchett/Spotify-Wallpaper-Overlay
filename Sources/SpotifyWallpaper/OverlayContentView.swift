@@ -48,6 +48,7 @@ final class OverlayContentView: NSView {
     private var shownTrackID: String?
     private var hideWhenIdle = false
     private var hideFrameWhenIdle = false
+    private var showDesktopFrame = true
     private var useVibrantColors = false
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
@@ -588,6 +589,15 @@ final class OverlayContentView: NSView {
             layer?.isHidden = false
             contentLayer.isHidden = true
         }
+    }
+
+    func setShowDesktopFrame(_ enabled: Bool) {
+        showDesktopFrame = enabled
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        barLayer.isHidden = !enabled
+        cornerLayer.isHidden = !enabled
+        CATransaction.commit()
     }
 
     func setUseVibrantColors(_ enabled: Bool) {

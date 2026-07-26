@@ -40,6 +40,7 @@ enum Settings {
     private static let missionControlBakeKey = "bakeInMissionControl"
     private static let hideWhenIdleKey = "hideOverlayWhenIdle"
     private static let hideFrameWhenIdleKey = "hideFrameWhenIdle"
+    private static let showDesktopFrameKey = "showDesktopFrame"
     private static let vibrantColorsKey = "useVibrantColors"
     private static let mediaDisplayModeKey = "mediaDisplayMode"
     private static let songInfoVisibilityKey = "songInfoVisibility"
@@ -75,6 +76,12 @@ enum Settings {
     static var hideFrameWhenIdle: Bool {
         get { UserDefaults.standard.bool(forKey: hideFrameWhenIdleKey) }
         set { UserDefaults.standard.set(newValue, forKey: hideFrameWhenIdleKey) }
+    }
+
+    /// Master switch for the black top strip and rounded corner masks.
+    static var showDesktopFrame: Bool {
+        get { boolOrTrue(showDesktopFrameKey) }
+        set { UserDefaults.standard.set(newValue, forKey: showDesktopFrameKey) }
     }
 
     static var useVibrantColors: Bool {

@@ -85,6 +85,13 @@ struct SettingsView: View {
                     isOn: Binding(
                         get: { model.useVibrantColors },
                         set: { model.setUseVibrantColors($0) }))
+                Divider()
+                SettingToggle(
+                    title: "Show the black desktop frame",
+                    description: "Adds the black top strip and rounded corner masks. When enabled, the frame is always shown during playback.",
+                    isOn: Binding(
+                        get: { model.showDesktopFrame },
+                        set: { model.setShowDesktopFrame($0) }))
             }
         }
     }
@@ -163,7 +170,8 @@ struct SettingsView: View {
                     isOn: Binding(
                         get: { model.hideFrameWhenIdle },
                         set: { model.setHideFrameWhenIdle($0) }),
-                    isEnabled: model.hideOverlayWhenIdle,
+                    isEnabled:
+                        model.hideOverlayWhenIdle && model.showDesktopFrame,
                     isNested: true)
             }
         }
@@ -171,12 +179,12 @@ struct SettingsView: View {
 
     private var missionControlSettings: some View {
         SettingsPanel(
-            title: "Mission Control",
-            subtitle: "Control how the overlay appears across your Spaces.",
+            title: "Wallpaper Workaround",
+            subtitle: "Optional help for macOS Space and Mission Control visual glitches.",
             systemImage: "rectangle.3.group") {
             SettingToggle(
-                title: "Keep artwork visible in Mission Control",
-                description: "Temporarily applies the current artwork to every Space. Your original wallpaper is restored when playback stops or the app quits.",
+                title: "Temporarily use the overlay as your wallpaper",
+                description: "Helps prevent flicker when switching Spaces or using Mission Control. We do our best to restore your original wallpaper whenever playback stops or the app quits.",
                 isOn: Binding(
                     get: { model.bakeInMissionControl },
                     set: { model.setBakeInMissionControl($0) }))
@@ -405,6 +413,7 @@ private struct DesktopPreview: View {
     }
 
     private var frameVisible: Bool {
+        model.showDesktopFrame &&
         !(isStoppedPreview &&
           model.hideOverlayWhenIdle &&
           model.hideFrameWhenIdle)
@@ -417,7 +426,9 @@ private struct DesktopPreview: View {
     private var previewCaption: String {
         switch model.selectedSettingsPage {
         case .display:
-            return "Media shape and background color update with your display choices."
+            return model.showDesktopFrame
+                ? "Media, color, and the black desktop frame update with your choices."
+                : "The black top strip and rounded corner masks are disabled."
         case .songInfo:
             return model.songInfoVisibility == .never
                 ? "Song information is hidden."
@@ -428,8 +439,8 @@ private struct DesktopPreview: View {
                 : "The artwork and desktop frame retreat together."
         case .missionControl:
             return model.bakeInMissionControl
-                ? "This composition is also used across Spaces in Mission Control."
-                : "The live overlay remains on the desktop only."
+                ? "The app temporarily uses this composition as each Space's wallpaper."
+                : "The wallpaper workaround is off; only the live overlay is used."
         case .app:
             return "App controls do not change the desktop composition."
         }
