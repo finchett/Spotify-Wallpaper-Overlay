@@ -1,12 +1,38 @@
-# SpotifyWallpaper
+<h1 align="center">SpotifyWallpaper</h1>
 
-Turn the macOS desktop into an ambient now-playing display. SpotifyWallpaper
-sits above the wallpaper and below every app, following your music across every
-Space without intercepting clicks.
+<p align="center">
+  Turn your Mac desktop into an ambient now-playing display.<br>
+  Your music, artwork, and colors—across every Space.
+</p>
 
-![SpotifyWallpaper changing the desktop artwork and colors with the current track](assets/demo.webp)
+<p align="center">
+  <a href="#-features">Features</a>
+  ·
+  <a href="#-install">Install</a>
+  ·
+  <a href="https://github.com/finchett/Spotify-Wallpaper-Overlay/releases/latest">Latest release</a>
+</p>
 
-## Features
+<p align="center">
+  <a href="https://github.com/finchett/Spotify-Wallpaper-Overlay/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/finchett/Spotify-Wallpaper-Overlay?color=1DB954&label=release">
+  </a>
+  <img alt="macOS 13 or later" src="https://img.shields.io/badge/macOS-13%2B-111111?logo=apple">
+  <img alt="Written in Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white">
+  <a href="LICENSE">
+    <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
+  </a>
+</p>
+
+<p align="center">
+  <img
+    src="assets/demo.webp"
+    alt="SpotifyWallpaper changing the desktop artwork and colors with the current track"
+    width="900"
+  >
+</p>
+
+## ✨ Features
 
 - **Spotify Canvas or album artwork** — play a track's looping Canvas when one
   is available, or use an animated album-cover fallback with a slow Ken Burns
@@ -26,12 +52,14 @@ Space without intercepting clicks.
 - **Native Mac conveniences** — launch at login, with optional menu-bar and Dock
   icons.
 
-Canvas is not available for every track. When it is missing or cannot be loaded,
-SpotifyWallpaper falls back automatically to the animated cover treatment.
+> [!TIP]
+> No Canvas for a track? SpotifyWallpaper automatically switches to its
+> animated album-cover treatment.
 
-## Install
+## 🚀 Install
 
-Requires macOS 13 or later and the Spotify desktop app.
+> [!NOTE]
+> Requires macOS 13 or later and the Spotify desktop app.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/finchett/Spotify-Wallpaper-Overlay/main/install.sh | bash
@@ -40,13 +68,19 @@ open -a SpotifyWallpaper
 
 Run the same install command again whenever you want to update.
 
-## Getting started
+## 🎛️ Getting started
 
-1. Open SpotifyWallpaper and allow the Automation requests for **System Events**
+1. **Open SpotifyWallpaper** and allow the Automation requests for **System Events**
    and **Spotify**.
-2. Start playing something in Spotify.
-3. Open SpotifyWallpaper's settings from the menu-bar icon to customize the
+2. **Play something** in Spotify.
+3. **Make it yours** from the menu-bar settings: customize the
    artwork, background, song info, playback behavior, and launch-at-login.
 
 That's it—SpotifyWallpaper runs quietly in the background and follows the local
 Spotify app. No Spotify developer project or API key is required.
+
+---
+
+<p align="center">
+  <sub>Made for macOS · <a href="LICENSE">MIT licensed</a></sub>
+</p>
