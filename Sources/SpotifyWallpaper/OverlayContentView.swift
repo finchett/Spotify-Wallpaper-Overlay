@@ -377,41 +377,74 @@ final class OverlayContentView: NSView {
         let container = CALayer()
         container.frame = contentLayer.bounds
 
-        let background = CAGradientLayer()
-        background.frame = gradientLayer.frame
-        background.colors = gradientLayer.colors
-        background.locations = gradientLayer.locations
-        background.startPoint = gradientLayer.startPoint
-        background.endPoint = gradientLayer.endPoint
-        container.addSublayer(background)
+        if backgroundImageLayer.isHidden {
+            let source =
+                (gradientLayer.presentation() as? CAGradientLayer) ??
+                gradientLayer
+            let background = CAGradientLayer()
+            copyPresentationGeometry(
+                from: gradientLayer,
+                to: background)
+            background.colors = source.colors
+            background.locations = source.locations
+            background.startPoint = source.startPoint
+            background.endPoint = source.endPoint
+            container.addSublayer(background)
+        } else {
+            let source = backgroundImageLayer.presentation() ??
+                backgroundImageLayer
+            let background = CALayer()
+            copyPresentationGeometry(
+                from: backgroundImageLayer,
+                to: background)
+            background.contents = source.contents
+            background.contentsGravity =
+                backgroundImageLayer.contentsGravity
+            background.masksToBounds =
+                backgroundImageLayer.masksToBounds
+            background.filters = backgroundImageLayer.filters
+            container.addSublayer(background)
+        }
 
         let shadow = CALayer()
-        shadow.frame = cardShadowLayer.frame
-        shadow.cornerRadius = cardShadowLayer.cornerRadius
-        shadow.backgroundColor = cardShadowLayer.backgroundColor
-        shadow.shadowColor = cardShadowLayer.shadowColor
-        shadow.shadowOpacity = cardShadowLayer.shadowOpacity
-        shadow.shadowRadius = cardShadowLayer.shadowRadius
-        shadow.shadowOffset = cardShadowLayer.shadowOffset
+        let shadowSource = cardShadowLayer.presentation() ??
+            cardShadowLayer
+        copyPresentationGeometry(
+            from: cardShadowLayer,
+            to: shadow)
+        shadow.cornerRadius = shadowSource.cornerRadius
+        shadow.backgroundColor = shadowSource.backgroundColor
+        shadow.shadowColor = shadowSource.shadowColor
+        shadow.shadowOpacity = shadowSource.shadowOpacity
+        shadow.shadowRadius = shadowSource.shadowRadius
+        shadow.shadowOffset = shadowSource.shadowOffset
         container.addSublayer(shadow)
 
         // Freeze the exact outgoing media. This prevents a playing Canvas from briefly
         // reverting to its cover while the old scene moves away.
+        let visibleMediaLayer =
+            playerLayer.isHidden ? cardLayer : playerLayer
         let media = CALayer()
-        media.frame = cardLayer.frame
+        let mediaSource = visibleMediaLayer.presentation() ??
+            visibleMediaLayer
+        copyPresentationGeometry(
+            from: visibleMediaLayer,
+            to: media)
         if !playerLayer.isHidden, let frame = currentVideoFrame() {
             media.contents = frame
         } else {
             media.contents = cardLayer.contents
         }
-        media.contentsGravity = cardLayer.contentsGravity
-        media.cornerRadius = cardLayer.cornerRadius
+        media.contentsGravity = visibleMediaLayer.contentsGravity
+        media.cornerRadius = mediaSource.cornerRadius
         media.masksToBounds = true
         container.addSublayer(media)
 
         for src in [titleLayer, artistLayer] {
+            let presented = (src.presentation() as? CATextLayer) ??
+                src
             let text = CATextLayer()
-            text.frame = src.frame
+            copyPresentationGeometry(from: src, to: text)
             text.string = src.string
             text.font = src.font
             text.fontSize = src.fontSize
@@ -420,13 +453,28 @@ final class OverlayContentView: NSView {
             text.truncationMode = src.truncationMode
             text.isWrapped = src.isWrapped
             text.contentsScale = src.contentsScale
-            text.opacity = src.opacity
+            text.opacity = presented.opacity
             container.addSublayer(text)
         }
 
         // The real layers are the incoming scene, so the snapshot belongs underneath.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         contentLayer.insertSublayer(container, below: gradientLayer)
+        CATransaction.commit()
         return container
+    }
+
+    private func copyPresentationGeometry(
+        from source: CALayer,
+        to destination: CALayer
+    ) {
+        let presented = source.presentation() ?? source
+        destination.bounds = presented.bounds
+        destination.position = presented.position
+        destination.anchorPoint = presented.anchorPoint
+        destination.transform = presented.transform
+        destination.opacity = presented.opacity
     }
 
     /// The new scene enters as an opaque page over the previous scene. The previous scene
@@ -445,20 +493,22 @@ final class OverlayContentView: NSView {
         outgoingShift.isAdditive = true
         outgoingShift.duration = duration
         outgoingShift.timingFunction = ease
-        outgoingShift.fillMode = .forwards
-        outgoingShift.isRemovedOnCompletion = false
         outgoing.add(outgoingShift, forKey: "parallax-underlay")
-        CATransaction.commit()
 
         // The opaque background is the leading page. The foreground trails it by
         // different amounts, producing depth while remaining part of the same entrance.
-        let backgroundSlide = CABasicAnimation(keyPath: "position.x")
-        backgroundSlide.fromValue = dx
-        backgroundSlide.toValue = 0
-        backgroundSlide.isAdditive = true
-        backgroundSlide.duration = duration
-        backgroundSlide.timingFunction = ease
-        gradientLayer.add(backgroundSlide, forKey: "incoming-background")
+        for background in [gradientLayer, backgroundImageLayer] {
+            let backgroundSlide = CABasicAnimation(
+                keyPath: "position.x")
+            backgroundSlide.fromValue = dx
+            backgroundSlide.toValue = 0
+            backgroundSlide.isAdditive = true
+            backgroundSlide.duration = duration
+            backgroundSlide.timingFunction = ease
+            background.add(
+                backgroundSlide,
+                forKey: "incoming-background")
+        }
 
         let incomingLayers: [(CALayer, CGFloat)] = [
             (cardShadowLayer, 1.08),
@@ -476,6 +526,7 @@ final class OverlayContentView: NSView {
             incoming.timingFunction = ease
             foreground.add(incoming, forKey: "parallax-slidein")
         }
+        CATransaction.commit()
     }
 
     private func showTextTemporarily() {
