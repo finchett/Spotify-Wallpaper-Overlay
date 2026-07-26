@@ -40,6 +40,8 @@ final class OverlayContentView: NSView {
     private var videoOutput: AVPlayerItemVideoOutput?
     private weak var videoOutputItem: AVPlayerItem?
     private var videoOutputObserver: Any?
+    private var playerReadyObservation: NSKeyValueObservation?
+    private var canvasRevealNotBefore: CFTimeInterval = 0
     private let videoFrameContext = CIContext()
 
     /// Card aspect ratio (width / height): 1 for the square cover, the video's ratio for Canvas.
@@ -326,21 +328,33 @@ final class OverlayContentView: NSView {
         // Preserve the complete old scene underneath the incoming one.
         let outgoing = shouldSlide ? snapshotScene() : nil
 
-        if let cg = cover.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            cardLayer.contents = cg
-        }
         let base = ColorExtractor.vibrant(from: cover)
         currentBaseColor = base
+
+        // Scene swaps must be instantaneous. The page-slide animation below supplies
+        // all motion; Core Animation's default contents/colors fades cause ghosting.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if let cg = cover.cgImage(
+            forProposedRect: nil,
+            context: nil,
+            hints: nil) {
+            cardLayer.contents = cg
+        }
         applyGradient(from: base)
         titleLayer.string = track.title
         artistLayer.string = track.artist
+        CATransaction.commit()
 
+        canvasRevealNotBefore =
+            CACurrentMediaTime() + (shouldSlide ? 0.62 : 0)
         if let canvasURL {
             startCanvas(url: canvasURL)
         } else {
             stopCanvas()
         }
         startAmbientAnimations()
+        layoutSubtreeIfNeeded()
 
         shownTrackID = track.id
         contentLayer.isHidden = false
@@ -381,14 +395,19 @@ final class OverlayContentView: NSView {
         shadow.shadowOffset = cardShadowLayer.shadowOffset
         container.addSublayer(shadow)
 
-        // Use the cover image even if a Canvas video was showing (good enough for the exit).
-        let cover = CALayer()
-        cover.frame = cardLayer.frame
-        cover.contents = cardLayer.contents
-        cover.contentsGravity = cardLayer.contentsGravity
-        cover.cornerRadius = cardLayer.cornerRadius
-        cover.masksToBounds = true
-        container.addSublayer(cover)
+        // Freeze the exact outgoing media. This prevents a playing Canvas from briefly
+        // reverting to its cover while the old scene moves away.
+        let media = CALayer()
+        media.frame = cardLayer.frame
+        if !playerLayer.isHidden, let frame = currentVideoFrame() {
+            media.contents = frame
+        } else {
+            media.contents = cardLayer.contents
+        }
+        media.contentsGravity = cardLayer.contentsGravity
+        media.cornerRadius = cardLayer.cornerRadius
+        media.masksToBounds = true
+        container.addSublayer(media)
 
         for src in [titleLayer, artistLayer] {
             let text = CATextLayer()
@@ -774,6 +793,12 @@ final class OverlayContentView: NSView {
     // MARK: - Canvas video
 
     private func startCanvas(url: URL) {
+        // Fully detach the previous player first so AVPlayerLayer cannot retain and
+        // ghost its last decoded frame into the incoming scene.
+        let revealDeadline = canvasRevealNotBefore
+        stopCanvas()
+        canvasRevealNotBefore = revealDeadline
+
         let item = AVPlayerItem(url: url)
         let queue = AVQueuePlayer()
         queue.isMuted = true
@@ -790,12 +815,38 @@ final class OverlayContentView: NSView {
         ) { [weak self, weak queue] _ in
             self?.attachVideoOutput(to: queue?.currentItem)
         }
-        playerLayer.player = queue
         player = queue
-        queue.play()
 
-        playerLayer.isHidden = false
-        cardLayer.isHidden = true      // video takes the card slot; cover hidden behind it
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.player = queue
+        playerLayer.isHidden = true
+        cardLayer.isHidden = false
+        CATransaction.commit()
+
+        playerReadyObservation = playerLayer.observe(
+            \.isReadyForDisplay,
+            options: [.initial, .new]
+        ) { [weak self, weak queue] layer, _ in
+            guard layer.isReadyForDisplay else { return }
+            let delay = max(
+                0,
+                (self?.canvasRevealNotBefore ?? 0) -
+                    CACurrentMediaTime())
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let self,
+                      let queue,
+                      self.player === queue else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                self.playerLayer.isHidden = false
+                self.cardLayer.isHidden = true
+                CATransaction.commit()
+                self.playerReadyObservation?.invalidate()
+                self.playerReadyObservation = nil
+            }
+        }
+        queue.play()
 
         // Canvas clips are portrait; assume 9:16 immediately, then refine to the real size.
         updateCardAspect(9.0 / 16.0)
@@ -803,6 +854,9 @@ final class OverlayContentView: NSView {
     }
 
     private func stopCanvas() {
+        canvasRevealNotBefore = 0
+        playerReadyObservation?.invalidate()
+        playerReadyObservation = nil
         if let videoOutputObserver, let player {
             player.removeTimeObserver(videoOutputObserver)
         }
@@ -816,10 +870,13 @@ final class OverlayContentView: NSView {
         player?.pause()
         player = nil
         looper = nil
-        playerLayer.player = nil
 
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.player = nil
         playerLayer.isHidden = true
         cardLayer.isHidden = false
+        CATransaction.commit()
         updateCardAspect(1.0)          // square for the cover
     }
 
