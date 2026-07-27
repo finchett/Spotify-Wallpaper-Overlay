@@ -5,6 +5,7 @@ final class OverlayController {
     private var windows: [OverlayWindow] = []
     private var hideWhenIdle = false
     private var desktopFrameMode = DesktopFrameMode.always
+    private var showDesktopFrameOnSecondaryDisplays = false
     private var useVibrantColors = false
     private var songInfoVisibility = SongInfoVisibility.briefly
     private var songInfoPosition = SongInfoPosition.bottomLeft
@@ -19,12 +20,14 @@ final class OverlayController {
     /// (Re)create a window for every current screen. Safe to call on hot-plug / resolution change.
     func rebuildForScreens() {
         windows.forEach { $0.orderOut(nil) }
-        windows = NSScreen.screens.map { OverlayWindow(screen: $0) }
+        windows = NSScreen.screens.enumerated().map { index, screen in
+            OverlayWindow(screen: screen, isPrimaryDisplay: index == 0)
+        }
         captureDesktopWallpapers(overwrite: false)
         windows.forEach {
             $0.overlayView.setHideWhenIdle(
                 hideWhenIdle, currentlyIdle: isIdle, animated: false)
-            $0.overlayView.setDesktopFrameMode(desktopFrameMode)
+            applyDesktopFrameMode(to: $0)
             $0.overlayView.setUseVibrantColors(useVibrantColors)
             $0.overlayView.setSongInfoVisibility(songInfoVisibility)
             $0.overlayView.setSongInfoPosition(songInfoPosition)
@@ -59,7 +62,12 @@ final class OverlayController {
 
     func setDesktopFrameMode(_ mode: DesktopFrameMode) {
         desktopFrameMode = mode
-        windows.forEach { $0.overlayView.setDesktopFrameMode(mode) }
+        windows.forEach(applyDesktopFrameMode)
+    }
+
+    func setDesktopFrameOnSecondaryDisplays(_ enabled: Bool) {
+        showDesktopFrameOnSecondaryDisplays = enabled
+        windows.forEach(applyDesktopFrameMode)
     }
 
     func setUseVibrantColors(_ enabled: Bool) {
@@ -127,6 +135,14 @@ final class OverlayController {
             image: image,
             blur: backgroundBlur,
             brightness: backgroundBrightness)
+    }
+
+    private func applyDesktopFrameMode(to window: OverlayWindow) {
+        let enabledOnDisplay =
+            window.isPrimaryDisplay ||
+            showDesktopFrameOnSecondaryDisplays
+        window.overlayView.setDesktopFrameMode(
+            enabledOnDisplay ? desktopFrameMode : .never)
     }
 
     private func captureDesktopWallpapers(overwrite: Bool) {

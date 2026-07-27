@@ -3,11 +3,14 @@ import AppKit
 /// A borderless, click-through window pinned just above the wallpaper and below every
 /// app window. Joins all Spaces, so a single window covers the whole desktop everywhere.
 final class OverlayWindow: NSWindow {
-    let overlayView = OverlayContentView()
+    let overlayView: OverlayContentView
     let wallpaperScreen: NSScreen
+    let isPrimaryDisplay: Bool
 
-    init(screen: NSScreen) {
+    init(screen: NSScreen, isPrimaryDisplay: Bool) {
         wallpaperScreen = screen
+        self.isPrimaryDisplay = isPrimaryDisplay
+        overlayView = OverlayContentView(screen: screen)
         super.init(contentRect: screen.frame,
                    styleMask: .borderless,
                    backing: .buffered,

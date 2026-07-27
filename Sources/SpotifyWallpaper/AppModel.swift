@@ -34,6 +34,7 @@ final class AppModel: ObservableObject {
     @Published var bakeInMissionControl = false
     @Published var hideOverlayWhenIdle = false
     @Published var desktopFrameMode = DesktopFrameMode.always
+    @Published var showDesktopFrameOnSecondaryDisplays = false
     @Published var useVibrantColors = false
     @Published var mediaDisplayMode = MediaDisplayMode.canvasWhenAvailable
     @Published var songInfoVisibility = SongInfoVisibility.briefly
@@ -55,6 +56,7 @@ final class AppModel: ObservableObject {
     var setBakeInMissionControl: (Bool) -> Void = { _ in }
     var setHideOverlayWhenIdle: (Bool) -> Void = { _ in }
     var setDesktopFrameMode: (DesktopFrameMode) -> Void = { _ in }
+    var setShowDesktopFrameOnSecondaryDisplays: (Bool) -> Void = { _ in }
     var setUseVibrantColors: (Bool) -> Void = { _ in }
     var setMediaDisplayMode: (MediaDisplayMode) -> Void = { _ in }
     var setSongInfoVisibility: (SongInfoVisibility) -> Void = { _ in }

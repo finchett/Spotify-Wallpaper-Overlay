@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.bakeInMissionControl = Settings.bakeInMissionControl
         model.hideOverlayWhenIdle = Settings.hideOverlayWhenIdle
         model.desktopFrameMode = Settings.desktopFrameMode
+        model.showDesktopFrameOnSecondaryDisplays =
+            Settings.showDesktopFrameOnSecondaryDisplays
         model.useVibrantColors = Settings.useVibrantColors
         model.mediaDisplayMode = Settings.mediaDisplayMode
         model.songInfoVisibility = Settings.songInfoVisibility
@@ -73,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.setDesktopFrameMode = { [weak self] mode in
             self?.applyDesktopFrameMode(mode)
+        }
+        model.setShowDesktopFrameOnSecondaryDisplays = { [weak self] on in
+            self?.applyDesktopFrameOnSecondaryDisplays(on)
         }
         model.setUseVibrantColors = { [weak self] on in
             self?.applyUseVibrantColors(on)
@@ -112,6 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         overlay.setHideWhenIdle(model.hideOverlayWhenIdle)
         overlay.setDesktopFrameMode(model.desktopFrameMode)
+        overlay.setDesktopFrameOnSecondaryDisplays(
+            model.showDesktopFrameOnSecondaryDisplays)
         overlay.setUseVibrantColors(model.useVibrantColors)
         overlay.setSongInfoVisibility(model.songInfoVisibility)
         overlay.setSongInfoPosition(model.songInfoPosition)
@@ -275,6 +282,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.desktopFrameMode = mode
         model.desktopFrameMode = mode
         overlay.setDesktopFrameMode(mode)
+        scheduleWallpaperBake()
+    }
+
+    private func applyDesktopFrameOnSecondaryDisplays(_ on: Bool) {
+        Settings.showDesktopFrameOnSecondaryDisplays = on
+        model.showDesktopFrameOnSecondaryDisplays = on
+        overlay.setDesktopFrameOnSecondaryDisplays(on)
         scheduleWallpaperBake()
     }
 

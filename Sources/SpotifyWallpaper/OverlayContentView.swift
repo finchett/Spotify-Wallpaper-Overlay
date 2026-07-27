@@ -2,7 +2,6 @@ import AppKit
 import AVFoundation
 import CoreImage
 import CoreVideo
-import Darwin
 
 /// The layered view that fills a screen. The layout is identical either way — vibrant
 /// gradient background, a centered rounded card, title/artist bottom-left — the only
@@ -11,16 +10,10 @@ import Darwin
 ///   • Cover mode   — the static cover with a slow Ken Burns zoom.
 /// Both are topped with the black menu-bar bar and black rounded corners.
 final class OverlayContentView: NSView {
-    // Overlay geometry, in device pixels (see [[wallpaper-black-overlays]]).
-    private static let menuBarHeightPixels: CGFloat = {
-        guard let chip = sysctlString("machdep.cpu.brand_string") else {
-            return 64
-        }
-        return chip.range(
-            of: #"\bApple M1(?:\s|$)"#,
-            options: .regularExpression) == nil ? 64 : 74
-    }()
-    private let cornerRadiusPixels: CGFloat = 44
+    // Geometry is captured per display. External displays can have a different
+    // menu-bar height (or no reserved menu-bar area at all).
+    private let menuBarHeight: CGFloat
+    private let cornerRadius: CGFloat
 
     /// Holds all the now-playing content (gradient, card, text) so it can be revealed or
     /// hidden as a group — leaving the black bar + corners always visible on top.
@@ -67,8 +60,15 @@ final class OverlayContentView: NSView {
 
     private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(screen: NSScreen) {
+        let visibleTopInset = max(
+            0,
+            screen.frame.maxY - screen.visibleFrame.maxY)
+        menuBarHeight = max(
+            visibleTopInset,
+            screen.safeAreaInsets.top)
+        cornerRadius = 44 / max(screen.backingScaleFactor, 1)
+        super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         setupLayers()
@@ -204,11 +204,11 @@ final class OverlayContentView: NSView {
         backgroundImageLayer.contentsScale = s
 
         // Black menu-bar bar across the top.
-        let barHeight = Self.menuBarHeightPixels / s
+        let barHeight = menuBarHeight
         barLayer.frame = CGRect(x: 0, y: b.height - barHeight, width: b.width, height: barHeight)
 
         // Black rounded corners on the content region *below* the bar.
-        let radius = cornerRadiusPixels / s
+        let radius = cornerRadius
         let contentRect = CGRect(x: 0, y: 0, width: b.width, height: b.height - barHeight)
         let path = CGMutablePath()
         path.addRect(contentRect)
@@ -1026,17 +1026,4 @@ final class OverlayContentView: NSView {
         }
     }
 
-    private static func sysctlString(_ name: String) -> String? {
-        var size = 0
-        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
-            return nil
-        }
-
-        var bytes = [CChar](repeating: 0, count: size)
-        let result = bytes.withUnsafeMutableBytes { buffer in
-            sysctlbyname(name, buffer.baseAddress, &size, nil, 0)
-        }
-        guard result == 0 else { return nil }
-        return String(cString: bytes)
-    }
 }

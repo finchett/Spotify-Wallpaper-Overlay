@@ -92,6 +92,19 @@ struct SettingsView: View {
                         ("Never", .never),
                         ("When a song is playing", .whenPlaying),
                     ])
+                Divider()
+                SettingToggle(
+                    title: "Show on secondary displays",
+                    description: "Uses each display's actual menu-bar height.",
+                    isOn: Binding(
+                        get: {
+                            model.showDesktopFrameOnSecondaryDisplays
+                        },
+                        set: {
+                            model.setShowDesktopFrameOnSecondaryDisplays($0)
+                        }),
+                    isEnabled: model.desktopFrameMode != .never,
+                    isNested: true)
             }
         }
     }

@@ -46,7 +46,8 @@
   never; choose the corner, center position, and text size; or reveal it by
   clicking the desktop.
 - **Playback-aware behavior** — animate the artwork away when Spotify stops and
-  independently control the black menu-bar strip and rounded-corner masks.
+  independently control the black menu-bar strip and rounded-corner masks,
+  including whether they appear on secondary displays.
 - **Smooth Spaces and Mission Control** — optionally keep the current
   composition visible while switching desktops.
 - **Native Mac conveniences** — launch at login, with optional menu-bar and Dock

@@ -58,6 +58,8 @@ enum Settings {
     private static let hideFrameWhenIdleKey = "hideFrameWhenIdle"
     private static let showDesktopFrameKey = "showDesktopFrame"
     private static let desktopFrameModeKey = "desktopFrameMode"
+    private static let frameOnSecondaryDisplaysKey =
+        "showDesktopFrameOnSecondaryDisplays"
     private static let vibrantColorsKey = "useVibrantColors"
     private static let mediaDisplayModeKey = "mediaDisplayMode"
     private static let songInfoVisibilityKey = "songInfoVisibility"
@@ -116,6 +118,19 @@ enum Settings {
             UserDefaults.standard.set(
                 newValue.rawValue,
                 forKey: desktopFrameModeKey)
+        }
+    }
+
+    /// Secondary displays usually do not need the built-in panel treatment.
+    static var showDesktopFrameOnSecondaryDisplays: Bool {
+        get {
+            UserDefaults.standard.bool(
+                forKey: frameOnSecondaryDisplaysKey)
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: frameOnSecondaryDisplaysKey)
         }
     }
 
