@@ -10,7 +10,9 @@ final class OverlayWindow: NSWindow {
     init(screen: NSScreen, isPrimaryDisplay: Bool) {
         wallpaperScreen = screen
         self.isPrimaryDisplay = isPrimaryDisplay
-        overlayView = OverlayContentView(screen: screen)
+        overlayView = OverlayContentView(
+            screen: screen,
+            isPrimaryDisplay: isPrimaryDisplay)
         super.init(contentRect: screen.frame,
                    styleMask: .borderless,
                    backing: .buffered,

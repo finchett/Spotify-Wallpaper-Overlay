@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import CoreImage
 import CoreVideo
+import Darwin
 
 /// The layered view that fills a screen. The layout is identical either way — vibrant
 /// gradient background, a centered rounded card, title/artist bottom-left — the only
@@ -10,8 +11,14 @@ import CoreVideo
 ///   • Cover mode   — the static cover with a slow Ken Burns zoom.
 /// Both are topped with the black menu-bar bar and black rounded corners.
 final class OverlayContentView: NSView {
-    // Geometry is captured per display. External displays can have a different
-    // menu-bar height (or no reserved menu-bar area at all).
+    // The built-in display uses the known device-pixel dimensions for the
+    // physical panel treatment. Secondary displays use their own geometry.
+    private static let primaryMenuBarHeightPixels: CGFloat = {
+        guard let chip = sysctlString("machdep.cpu.brand_string") else {
+            return 64
+        }
+        return chip.hasPrefix("Apple M1") ? 74 : 64
+    }()
     private let menuBarHeight: CGFloat
     private let cornerRadius: CGFloat
 
@@ -60,14 +67,20 @@ final class OverlayContentView: NSView {
 
     private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
 
-    init(screen: NSScreen) {
+    init(screen: NSScreen, isPrimaryDisplay: Bool) {
+        let backingScale = max(screen.backingScaleFactor, 1)
         let visibleTopInset = max(
             0,
             screen.frame.maxY - screen.visibleFrame.maxY)
-        menuBarHeight = max(
-            visibleTopInset,
-            screen.safeAreaInsets.top)
-        cornerRadius = 44 / max(screen.backingScaleFactor, 1)
+        if isPrimaryDisplay {
+            menuBarHeight =
+                Self.primaryMenuBarHeightPixels / backingScale
+        } else {
+            menuBarHeight = max(
+                visibleTopInset,
+                screen.safeAreaInsets.top)
+        }
+        cornerRadius = 44 / backingScale
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -1024,6 +1037,20 @@ final class OverlayContentView: NSView {
                 adjust(base, brightness: 0.20, saturationScale: 0.95).cgColor,
             ]
         }
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+
+        var bytes = [CChar](repeating: 0, count: size)
+        let result = bytes.withUnsafeMutableBytes { buffer in
+            sysctlbyname(name, buffer.baseAddress, &size, nil, 0)
+        }
+        guard result == 0 else { return nil }
+        return String(cString: bytes)
     }
 
 }
