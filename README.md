@@ -24,14 +24,6 @@
   </a>
 </p>
 
-<p align="center">
-  <img
-    src="assets/demo.webp"
-    alt="SpotifyWallpaper changing the desktop artwork and colors with the current track"
-    width="900"
-  >
-</p>
-
 ## ✨ Features
 
 - **Spotify Canvas or album artwork** — play a track's looping Canvas when one
