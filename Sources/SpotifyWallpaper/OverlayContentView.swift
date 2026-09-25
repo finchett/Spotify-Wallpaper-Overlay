@@ -19,6 +19,10 @@ final class OverlayContentView: NSView {
         }
         return chip.hasPrefix("Apple M1") ? 74 : 64
     }()
+    private static let primaryCornerRadiusPixels: CGFloat = 44
+    /// The built-in panel's radius in points (44px at 2x). A low-DPI external display
+    /// would otherwise get 44pt corners, far rounder than anything macOS draws.
+    private static let maxSecondaryCornerRadius: CGFloat = 22
     private let menuBarHeight: CGFloat
     private let cornerRadius: CGFloat
 
@@ -80,7 +84,10 @@ final class OverlayContentView: NSView {
                 visibleTopInset,
                 screen.safeAreaInsets.top)
         }
-        cornerRadius = 44 / backingScale
+        let pixelRadius = Self.primaryCornerRadiusPixels / backingScale
+        cornerRadius = isPrimaryDisplay
+            ? pixelRadius
+            : min(pixelRadius, Self.maxSecondaryCornerRadius)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
