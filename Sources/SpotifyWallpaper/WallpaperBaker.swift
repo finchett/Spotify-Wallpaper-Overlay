@@ -5,6 +5,8 @@ import AppKit
 /// file until playback stops or the feature is disabled.
 final class WallpaperBaker {
     private var tempURLs: [URL] = []
+    private var killedAgentPIDs: Set<pid_t> = []
+    private static let agentBundleID = "com.apple.wallpaper.agent"
     private(set) var isBaked = false
 
     private let directory: URL
@@ -73,6 +75,33 @@ final class WallpaperBaker {
         removeTemporaryImages()
     }
 
+    /// Calls back once a relaunched WallpaperAgent reports a non-baked wallpaper, plus a
+    /// settle for its first frame. Gives up after a few seconds.
+    func whenOriginalWallpaperIsShowing(
+        settle: TimeInterval = 0.4,
+        _ completion: @escaping () -> Void
+    ) {
+        let deadline = Date().addingTimeInterval(3)
+        func check() {
+            let agentIsRunning = NSRunningApplication
+                .runningApplications(withBundleIdentifier: Self.agentBundleID)
+                .contains { !killedAgentPIDs.contains($0.processIdentifier) }
+            let showsBake = NSScreen.screens.contains { screen in
+                NSWorkspace.shared.desktopImageURL(for: screen)
+                    .map(isBakeImage) ?? false
+            }
+            if agentIsRunning && !showsBake {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + settle, execute: completion)
+            } else if Date() >= deadline {
+                completion()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { check() }
+            }
+        }
+        check()
+    }
+
     /// Captures the real wallpaper exactly once per playback session. Subsequent track
     /// changes always rebuild from these original bytes, never from a prior baked store.
     private func originalWallpaperStore() -> Data? {
@@ -80,9 +109,11 @@ final class WallpaperBaker {
             return saved
         }
         guard FileManager.default.fileExists(atPath: wallpaperStoreURL.path),
-              let originalData = try? Data(contentsOf: wallpaperStoreURL) else {
+              let currentData = try? Data(contentsOf: wallpaperStoreURL) else {
             return nil
         }
+        // Never adopt one of our own baked stores as the original.
+        let originalData = withoutBakedChoices(currentData)
         do {
             try originalData.write(to: recoveryURL, options: .atomic)
             return originalData
@@ -172,9 +203,12 @@ final class WallpaperBaker {
     }
 
     private func restoreAllSpacesStore() -> Bool {
-        guard let originalData = try? Data(contentsOf: recoveryURL) else {
+        guard let savedData = try? Data(contentsOf: recoveryURL) else {
             return false
         }
+        // Older builds (or two running copies) could save a baked store as the
+        // original; its image is long gone, which leaves macOS on a solid color.
+        let originalData = withoutBakedChoices(savedData)
         do {
             try writeWallpaperStore(originalData)
             restartWallpaperAgent()
@@ -186,12 +220,69 @@ final class WallpaperBaker {
         }
     }
 
+    /// Replaces every wallpaper choice that points at one of our bake images with the
+    /// macOS default, so a poisoned store never restores to a missing file.
+    private func withoutBakedChoices(_ data: Data) -> Data {
+        guard let root = try? PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) else {
+            return data
+        }
+        var changed = false
+        let cleaned = replacingBakedChoices(in: root, changed: &changed)
+        guard changed,
+              let cleanedData = try? PropertyListSerialization.data(
+                fromPropertyList: cleaned, format: .binary, options: 0) else {
+            return data
+        }
+        return cleanedData
+    }
+
+    private func replacingBakedChoices(in value: Any, changed: inout Bool) -> Any {
+        if let array = value as? [Any] {
+            return array.map { replacingBakedChoices(in: $0, changed: &changed) }
+        }
+        guard var dictionary = value as? [String: Any] else { return value }
+        if let choices = dictionary["Choices"] as? [[String: Any]],
+           choices.contains(where: isBakedChoice) {
+            dictionary["Choices"] = [[
+                "Provider": "default",
+                "Configuration": Data(),
+                "Files": [[String: Any]](),
+            ]]
+            dictionary["EncodedOptionValues"] = "$null"
+            changed = true
+            return dictionary
+        }
+        for (key, child) in dictionary {
+            dictionary[key] = replacingBakedChoices(in: child, changed: &changed)
+        }
+        return dictionary
+    }
+
+    private func isBakedChoice(_ choice: [String: Any]) -> Bool {
+        guard let data = choice["Configuration"] as? Data,
+              let configuration = try? PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) as? [String: Any],
+              let relative = (configuration["url"] as? [String: Any])?["relative"]
+                as? String,
+              let url = URL(string: relative), url.isFileURL else {
+            return false
+        }
+        return isBakeImage(url)
+    }
+
+    func isBakeImage(_ url: URL) -> Bool {
+        url.standardizedFileURL.deletingLastPathComponent().path ==
+            directory.standardizedFileURL.path &&
+            url.lastPathComponent.hasPrefix("bake-")
+    }
+
     private func recoverInterruptedBake() {
         if FileManager.default.fileExists(atPath: recoveryURL.path) {
             guard restoreAllSpacesStore() else { return }
         } else if let legacyData = try? Data(contentsOf: legacyRecoveryURL) {
             do {
-                try writeWallpaperStore(legacyData)
+                try writeWallpaperStore(withoutBakedChoices(legacyData))
                 restartWallpaperAgent()
                 try FileManager.default.removeItem(at: legacyRecoveryURL)
             } catch {
@@ -213,6 +304,9 @@ final class WallpaperBaker {
     }
 
     private func restartWallpaperAgent() {
+        killedAgentPIDs = Set(NSRunningApplication
+            .runningApplications(withBundleIdentifier: Self.agentBundleID)
+            .map(\.processIdentifier))
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         // SIGKILL prevents the old agent from flushing its in-memory baked state over

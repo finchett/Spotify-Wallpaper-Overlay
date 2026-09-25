@@ -40,6 +40,15 @@ struct SettingsView: View {
             }
 
             Spacer()
+
+            // The only way to quit when both the menu bar and Dock icons are hidden.
+            SidebarButton(
+                title: "Quit",
+                systemImage: "power",
+                isSelected: false
+            ) {
+                NSApp.terminate(nil)
+            }
         }
         .padding(12)
         .frame(width: 178)
@@ -276,7 +285,7 @@ struct SettingsView: View {
                 Divider()
                 SettingToggle(
                     title: "Show the app in the Dock",
-                    description: "Keeps the app in the Dock and opens settings at launch.",
+                    description: "Keeps the app in the Dock and opens settings at launch. It always shows while this window is open.",
                     isOn: Binding(
                         get: { model.showDockIcon },
                         set: { model.setShowDockIcon($0) }))

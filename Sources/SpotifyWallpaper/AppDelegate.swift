@@ -5,6 +5,10 @@ import Darwin
 import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Posted by a second launch so the running copy opens its window instead.
+    static let showSettingsNotification = Notification.Name(
+        "com.samfinchett.spotifywallpaper.showSettings")
+
     private let spotify = SpotifyClient()
     private let overlay = OverlayController()
     private let canvas = CanvasClient()
@@ -13,10 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var pendingWallpaperBake: DispatchWorkItem?
     private var pendingIdleRetreat: DispatchWorkItem?
+    private var standInGeneration = 0
     private var signalSources: [DispatchSourceSignal] = []
     private var desktopClickMonitor: Any?
     private var isShuttingDown = false
     private var isPollInFlight = false
+    /// Bumped by each Spotify notification so a probe that started before it can't
+    /// overturn the newer state when it finishes.
+    private var playbackEventGeneration = 0
     private let artworkCache = NSCache<NSString, NSImage>()
     private var pendingCanvas: (trackID: String, url: URL)?
 
@@ -115,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (Dock hidden, e.g. launched at login) stay quiet — reopen via the menu bar.
         if Settings.showDockIcon { showSettingsWindow() }
 
+        overlay.isBakedWallpaper = { [wallpaperBaker] in wallpaperBaker.isBakeImage($0) }
         overlay.setHideWhenIdle(model.hideOverlayWhenIdle)
         overlay.setDesktopFrameMode(model.desktopFrameMode)
         overlay.setDesktopFrameOnSecondaryDisplays(
@@ -129,6 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             brightness: model.backgroundBrightness)
         overlay.setBackgroundMode(model.backgroundMode)
         overlay.rebuildForScreens()
+        // A bake interrupted by a crash was just restored; capture the real wallpaper
+        // once WallpaperAgent is drawing it again.
+        refreshDesktopBackgroundWhenRestored()
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -139,6 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(systemWillPowerOff),
             name: NSWorkspace.willPowerOffNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(openSettings),
+            name: Self.showSettingsNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(spotifyPlaybackChanged(_:)),
+            name: SpotifyClient.playbackStateChanged, object: nil)
 
         installSignalHandlers()
         installDesktopClickMonitor()
@@ -196,6 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Settings window
 
     private func showSettingsWindow() {
+        // The Dock icon always accompanies the open window; windowWillClose hides it
+        // again when the preference is off.
+        NSApp.setActivationPolicy(.regular)
         if let settingsWindow {
             NSApp.activate(ignoringOtherApps: true)
             settingsWindow.makeKeyAndOrderFront(nil)
@@ -251,6 +272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyDockVisibility(_ on: Bool) {
         Settings.showDockIcon = on
         model.showDockIcon = on
+        // Turning it off from the open window takes effect when that window closes.
+        guard on || settingsWindow == nil else { return }
         NSApp.setActivationPolicy(on ? .regular : .accessory)
         if on { NSApp.activate(ignoringOtherApps: true) }
     }
@@ -343,6 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             overlay.refreshDesktopWallpapers()
             refreshDesktopBackgroundPreview()
+            refreshDesktopBackgroundWhenRestored()
         }
 
         overlay.setBackgroundMode(mode)
@@ -421,9 +445,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Re-captures the desktop wallpaper after WallpaperAgent restarts, since it reports
+    /// the baked (or no) image until then.
+    private func refreshDesktopBackgroundWhenRestored() {
+        wallpaperBaker.whenOriginalWallpaperIsShowing { [weak self] in
+            guard let self,
+                  self.model.backgroundMode == .desktopWallpaper,
+                  !self.wallpaperBaker.isBaked else { return }
+            self.overlay.refreshDesktopWallpapers()
+            self.refreshDesktopBackgroundPreview()
+        }
+    }
+
     private func refreshDesktopBackgroundPreview() {
         guard let screen = NSScreen.main,
-              let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
+              let url = NSWorkspace.shared.desktopImageURL(for: screen),
+              !wallpaperBaker.isBakeImage(url) else {
             model.desktopBackgroundPreview = nil
             return
         }
@@ -533,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if model.backgroundMode == .desktopWallpaper {
             overlay.refreshDesktopWallpapers()
             refreshDesktopBackgroundPreview()
+            refreshDesktopBackgroundWhenRestored()
         }
         if isIdle {
             overlay.showIdle()
@@ -565,6 +603,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self,
                   self.model.bakeInMissionControl,
                   !self.isIdle else { return }
+            // Last chance to capture the real wallpaper for the idle stand-in.
+            if !self.wallpaperBaker.isBaked {
+                self.overlay.refreshDesktopWallpapers()
+            }
             self.wallpaperBaker.bake(self.overlay.snapshots())
             self.pendingWallpaperBake = nil
         }
@@ -572,51 +614,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
-    /// Restore while the full overlay still covers the desktop, allow WallpaperAgent
-    /// half a second to settle, then reveal the already-restored wallpaper.
+    /// WallpaperAgent takes a moment to redraw the original after a restore, so a
+    /// captured copy of it stands in beneath the overlay and the idle animation starts
+    /// at once. Without a copy, the reveal waits for the agent instead, since revealing
+    /// sooner shows the baked image swap over.
     private func beginIdleTransition() {
         pendingIdleRetreat?.cancel()
         pendingIdleRetreat = nil
 
-        let wasBaked = wallpaperBaker.isBaked
-        if model.bakeInMissionControl {
-            wallpaperBaker.restore()
-        }
-
-        guard model.bakeInMissionControl, wasBaked else {
+        guard model.bakeInMissionControl, wallpaperBaker.isBaked else {
+            if model.bakeInMissionControl {
+                wallpaperBaker.restore()   // clears any leftover recovery file
+            }
             overlay.showIdle()
             return
         }
 
-        guard model.hideOverlayWhenIdle else {
-            overlay.showIdle()
+        standInGeneration += 1
+        let generation = standInGeneration
+        guard overlay.showWallpaperStandIns() else {
+            restoreWallpaper(afterIdleWithStandIn: false, generation: generation)
+            return
+        }
+        overlay.showIdle()
+        // Restoring blocks the main thread while WallpaperAgent is killed; let this
+        // run-loop turn commit the animation first so it starts immediately.
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreWallpaper(afterIdleWithStandIn: true, generation: generation)
+        }
+    }
+
+    private func restoreWallpaper(afterIdleWithStandIn hasStandIn: Bool, generation: Int) {
+        wallpaperBaker.restore()
+        guard !wallpaperBaker.isBaked else {
+            // Restore failed; nothing will replace the stand-in, so drop it now.
+            overlay.hideWallpaperStandIns()
+            if !hasStandIn, isIdle { overlay.showIdle() }
             return
         }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isIdle else { return }
-            self.overlay.showIdle()
+            if self.model.backgroundMode == .desktopWallpaper {
+                self.overlay.refreshDesktopWallpapers()
+                self.refreshDesktopBackgroundPreview()
+            }
+            if !hasStandIn {
+                self.overlay.showIdle()
+            }
             self.pendingIdleRetreat = nil
         }
         pendingIdleRetreat = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        // Nothing waits on the stand-in, so give the agent generous time to draw.
+        wallpaperBaker.whenOriginalWallpaperIsShowing(
+            settle: hasStandIn ? 1.0 : 0.4
+        ) { [weak self] in
+            guard let self else { return }
+            // Playback resuming cancels the work, but the stand-in must still go.
+            if self.standInGeneration == generation {
+                self.overlay.hideWallpaperStandIns()
+            }
+            guard !work.isCancelled else { return }
+            work.perform()
+        }
+    }
+
+    @objc private func spotifyPlaybackChanged(_ notification: Notification) {
+        guard !isShuttingDown,
+              let result = SpotifyClient.probe(from: notification) else { return }
+        playbackEventGeneration += 1
+        handle(result)
     }
 
     private func poll() {
         guard !isPollInFlight, !isShuttingDown else { return }
         isPollInFlight = true
+        let generation = playbackEventGeneration
         spotify.probe { [weak self] result in
             guard let self else { return }
             self.isPollInFlight = false
-            switch result {
-            case .playing(let trackID):
-                self.handlePlaying(trackID: trackID)
-            case .stopped:
-                self.handleStopped()
-            case .unavailable:
-                // A transient AppleScript failure is not a playback stop.
-                break
-            }
+            guard generation == self.playbackEventGeneration else { return }
+            self.handle(result)
+        }
+    }
+
+    private func handle(_ result: SpotifyPlaybackProbe) {
+        switch result {
+        case .playing(let trackID):
+            handlePlaying(trackID: trackID)
+        case .stopped:
+            handleStopped()
+        case .unavailable:
+            // A transient AppleScript failure is not a playback stop.
+            break
         }
     }
 
@@ -720,6 +810,9 @@ extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if (notification.object as? NSWindow) === settingsWindow {
             settingsWindow = nil
+            if !Settings.showDockIcon {
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
     }
 }

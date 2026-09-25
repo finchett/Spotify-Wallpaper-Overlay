@@ -14,8 +14,10 @@ final class OverlayController {
     private var backgroundBlur = 0.0
     private var backgroundBrightness = 0.0
     private var customBackgroundImage: NSImage?
-    private var desktopBackgrounds: [String: NSImage] = [:]
+    private var desktopBackgrounds: [String: CapturedWallpaper] = [:]
     private var isIdle = true
+    /// Identifies our own baked images, which must never be captured as the wallpaper.
+    var isBakedWallpaper: (URL) -> Bool = { _ in false }
 
     /// (Re)create a window for every current screen. Safe to call on hot-plug / resolution change.
     func rebuildForScreens() {
@@ -126,7 +128,7 @@ final class OverlayController {
         case .albumColors:
             image = nil
         case .desktopWallpaper:
-            image = desktopBackgrounds[screenKey(window.wallpaperScreen)]
+            image = desktopBackgrounds[screenKey(window.wallpaperScreen)]?.image
         case .customImage:
             image = customBackgroundImage
         }
@@ -153,10 +155,13 @@ final class OverlayController {
                 continue
             }
             guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
+                  !isBakedWallpaper(url),
                   let image = NSImage(contentsOf: url) else {
                 continue
             }
-            desktopBackgrounds[key] = image
+            desktopBackgrounds[key] = CapturedWallpaper(
+                image: image,
+                options: NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:])
         }
     }
 
@@ -164,6 +169,24 @@ final class OverlayController {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return (screen.deviceDescription[key] as? NSNumber)?.stringValue ??
             screen.localizedName
+    }
+
+    /// Covers every screen with its captured real wallpaper, beneath the overlay, so the
+    /// idle animation can reveal it before WallpaperAgent has redrawn. Shows nothing and
+    /// returns false unless every screen has a capture.
+    func showWallpaperStandIns() -> Bool {
+        let captures = windows.map { desktopBackgrounds[screenKey($0.wallpaperScreen)] }
+        guard !windows.isEmpty, !captures.contains(where: { $0 == nil }) else {
+            return false
+        }
+        for (window, capture) in zip(windows, captures) {
+            window.showWallpaperStandIn(capture!)
+        }
+        return true
+    }
+
+    func hideWallpaperStandIns() {
+        windows.forEach { $0.hideWallpaperStandIn() }
     }
 
     /// Re-assert the windows (e.g. on a Space change) to reduce transition flicker.

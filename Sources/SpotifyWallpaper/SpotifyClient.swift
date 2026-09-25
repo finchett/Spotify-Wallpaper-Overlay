@@ -17,9 +17,16 @@ enum SpotifyPlaybackProbe {
 /// Reads the currently playing track from the local Spotify desktop app via AppleScript.
 /// No OAuth, no network — but only reports while Spotify.app is running.
 final class SpotifyClient {
+    /// Spotify broadcasts this the instant playback changes, which is far quicker
+    /// than waiting for the next probe.
+    static let playbackStateChanged = Notification.Name(
+        "com.spotify.client.PlaybackStateChanged")
+
     private let queue = DispatchQueue(
         label: "com.spotifywallpaper.spotify-client",
         qos: .userInitiated)
+    /// Compiled once on `queue`; compiling on every probe added noticeable latency.
+    private var compiledProbe: NSAppleScript?
 
     // Keep the frequent probe small. Metadata is fetched separately only when the
     // track id changes.
@@ -53,9 +60,14 @@ final class SpotifyClient {
     """
 
     func probe(completion: @escaping (SpotifyPlaybackProbe) -> Void) {
-        queue.async { [probeSource] in
+        queue.async { [self] in
             var error: NSDictionary?
-            guard let apple = NSAppleScript(source: probeSource) else {
+            if compiledProbe == nil,
+               let script = NSAppleScript(source: probeSource),
+               script.compileAndReturnError(nil) {
+                compiledProbe = script
+            }
+            guard let apple = compiledProbe else {
                 DispatchQueue.main.async { completion(.unavailable) }
                 return
             }
@@ -73,6 +85,20 @@ final class SpotifyClient {
                 result = .stopped
             }
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Reads a PlaybackStateChanged notification. Nil when it isn't conclusive.
+    static func probe(from notification: Notification) -> SpotifyPlaybackProbe? {
+        switch notification.userInfo?["Player State"] as? String {
+        case "Playing":
+            guard let trackID = notification.userInfo?["Track ID"] as? String,
+                  !trackID.isEmpty else { return nil }
+            return .playing(trackID: trackID)
+        case "Paused", "Stopped":
+            return .stopped
+        default:
+            return nil
         }
     }
 
