@@ -20,11 +20,21 @@ final class OverlayContentView: NSView {
         return chip.hasPrefix("Apple M1") ? 74 : 64
     }()
     private static let primaryCornerRadiusPixels: CGFloat = 44
-    /// The built-in panel's radius in points (44px at 2x). A low-DPI external display
-    /// would otherwise get 44pt corners, far rounder than anything macOS draws.
-    private static let maxSecondaryCornerRadius: CGFloat = 22
-    private let menuBarHeight: CGFloat
-    private let cornerRadius: CGFloat
+    private let isPrimaryDisplay: Bool
+    private let backingScale: CGFloat
+    private let baseMenuBarHeight: CGFloat
+    /// User fine-tuning from the Advanced settings.
+    private var barAdjustmentPixels: CGFloat = 0
+    private var secondaryCornerRadius = CGFloat(Settings.maxSecondaryCornerRadius)
+
+    private var menuBarHeight: CGFloat {
+        max(0, baseMenuBarHeight + barAdjustmentPixels / backingScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        let pixelRadius = Self.primaryCornerRadiusPixels / backingScale
+        return isPrimaryDisplay ? pixelRadius : min(pixelRadius, secondaryCornerRadius)
+    }
 
     /// Holds all the now-playing content (gradient, card, text) so it can be revealed or
     /// hidden as a group — leaving the black bar + corners always visible on top.
@@ -73,21 +83,19 @@ final class OverlayContentView: NSView {
 
     init(screen: NSScreen, isPrimaryDisplay: Bool) {
         let backingScale = max(screen.backingScaleFactor, 1)
+        self.backingScale = backingScale
+        self.isPrimaryDisplay = isPrimaryDisplay
         let visibleTopInset = max(
             0,
             screen.frame.maxY - screen.visibleFrame.maxY)
         if isPrimaryDisplay {
-            menuBarHeight =
+            baseMenuBarHeight =
                 Self.primaryMenuBarHeightPixels / backingScale
         } else {
-            menuBarHeight = max(
+            baseMenuBarHeight = max(
                 visibleTopInset,
                 screen.safeAreaInsets.top)
         }
-        let pixelRadius = Self.primaryCornerRadiusPixels / backingScale
-        cornerRadius = isPrimaryDisplay
-            ? pixelRadius
-            : min(pixelRadius, Self.maxSecondaryCornerRadius)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -698,6 +706,12 @@ final class OverlayContentView: NSView {
         barLayer.isHidden = !visible
         cornerLayer.isHidden = !visible
         CATransaction.commit()
+    }
+
+    func setFrameGeometry(barAdjustmentPixels: CGFloat, secondaryCornerRadius: CGFloat) {
+        self.barAdjustmentPixels = barAdjustmentPixels
+        self.secondaryCornerRadius = secondaryCornerRadius
+        needsLayout = true
     }
 
     func setUseVibrantColors(_ enabled: Bool) {

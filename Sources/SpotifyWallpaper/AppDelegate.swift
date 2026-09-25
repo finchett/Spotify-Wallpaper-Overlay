@@ -70,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSImage(contentsOf: $0)
             }
         model.customBackgroundImageName = Settings.customBackgroundImageName
+        model.mainDisplayBarAdjustment = Settings.mainDisplayBarAdjustment
+        model.secondaryDisplayBarAdjustment = Settings.secondaryDisplayBarAdjustment
+        model.secondaryDisplayCornerRadius = Settings.secondaryDisplayCornerRadius
         refreshDesktopBackgroundPreview()
         model.loginAction = { [weak self] in self?.presentLogin() }
         model.setLaunchAtLogin = { [weak self] on in self?.applyLaunchAtLogin(on) }
@@ -117,6 +120,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.chooseBackgroundImageAction = { [weak self] in
             self?.chooseBackgroundImage()
         }
+        model.setMainDisplayBarAdjustment = { [weak self] pixels in
+            self?.applyMainDisplayBarAdjustment(pixels)
+        }
+        model.setSecondaryDisplayBarAdjustment = { [weak self] pixels in
+            self?.applySecondaryDisplayBarAdjustment(pixels)
+        }
+        model.setSecondaryDisplayCornerRadius = { [weak self] radius in
+            self?.applySecondaryDisplayCornerRadius(radius)
+        }
 
         setupMenuBar(enabled: model.showMenuBarIcon)
         // Show the window on launch only when there's a Dock icon; in background-agent mode
@@ -129,6 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.setDesktopFrameOnSecondaryDisplays(
             model.showDesktopFrameOnSecondaryDisplays)
         overlay.setUseVibrantColors(model.useVibrantColors)
+        overlay.setFrameGeometry(
+            mainBarAdjustment: model.mainDisplayBarAdjustment,
+            secondaryBarAdjustment: model.secondaryDisplayBarAdjustment,
+            secondaryCornerRadius: model.secondaryDisplayCornerRadius)
         overlay.setSongInfoVisibility(model.songInfoVisibility)
         overlay.setSongInfoPosition(model.songInfoPosition)
         overlay.setSongInfoSize(model.songInfoSize)
@@ -319,6 +335,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.useVibrantColors = on
         model.useVibrantColors = on
         overlay.setUseVibrantColors(on)
+        scheduleWallpaperBake()
+    }
+
+    private func applyMainDisplayBarAdjustment(_ pixels: Double) {
+        let value = min(10, max(-10, pixels.rounded()))
+        Settings.mainDisplayBarAdjustment = value
+        model.mainDisplayBarAdjustment = value
+        applyFrameGeometry()
+    }
+
+    private func applySecondaryDisplayBarAdjustment(_ pixels: Double) {
+        let value = min(10, max(-10, pixels.rounded()))
+        Settings.secondaryDisplayBarAdjustment = value
+        model.secondaryDisplayBarAdjustment = value
+        applyFrameGeometry()
+    }
+
+    private func applySecondaryDisplayCornerRadius(_ radius: Double) {
+        let value = min(Settings.maxSecondaryCornerRadius, max(0, radius.rounded()))
+        Settings.secondaryDisplayCornerRadius = value
+        model.secondaryDisplayCornerRadius = value
+        applyFrameGeometry()
+    }
+
+    private func applyFrameGeometry() {
+        overlay.setFrameGeometry(
+            mainBarAdjustment: model.mainDisplayBarAdjustment,
+            secondaryBarAdjustment: model.secondaryDisplayBarAdjustment,
+            secondaryCornerRadius: model.secondaryDisplayCornerRadius)
         scheduleWallpaperBake()
     }
 

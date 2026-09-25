@@ -16,6 +16,9 @@ final class OverlayController {
     private var customBackgroundImage: NSImage?
     private var desktopBackgrounds: [String: CapturedWallpaper] = [:]
     private var isIdle = true
+    private var mainBarAdjustment = 0.0
+    private var secondaryBarAdjustment = 0.0
+    private var secondaryCornerRadius = Settings.maxSecondaryCornerRadius
     /// Identifies our own baked images, which must never be captured as the wallpaper.
     var isBakedWallpaper: (URL) -> Bool = { _ in false }
 
@@ -30,6 +33,7 @@ final class OverlayController {
             $0.overlayView.setHideWhenIdle(
                 hideWhenIdle, currentlyIdle: isIdle, animated: false)
             applyDesktopFrameMode(to: $0)
+            applyFrameGeometry(to: $0)
             $0.overlayView.setUseVibrantColors(useVibrantColors)
             $0.overlayView.setSongInfoVisibility(songInfoVisibility)
             $0.overlayView.setSongInfoPosition(songInfoPosition)
@@ -70,6 +74,17 @@ final class OverlayController {
     func setDesktopFrameOnSecondaryDisplays(_ enabled: Bool) {
         showDesktopFrameOnSecondaryDisplays = enabled
         windows.forEach(applyDesktopFrameMode)
+    }
+
+    func setFrameGeometry(
+        mainBarAdjustment: Double,
+        secondaryBarAdjustment: Double,
+        secondaryCornerRadius: Double
+    ) {
+        self.mainBarAdjustment = mainBarAdjustment
+        self.secondaryBarAdjustment = secondaryBarAdjustment
+        self.secondaryCornerRadius = secondaryCornerRadius
+        windows.forEach(applyFrameGeometry)
     }
 
     func setUseVibrantColors(_ enabled: Bool) {
@@ -145,6 +160,13 @@ final class OverlayController {
             showDesktopFrameOnSecondaryDisplays
         window.overlayView.setDesktopFrameMode(
             enabledOnDisplay ? desktopFrameMode : .never)
+    }
+
+    private func applyFrameGeometry(to window: OverlayWindow) {
+        window.overlayView.setFrameGeometry(
+            barAdjustmentPixels: CGFloat(
+                window.isPrimaryDisplay ? mainBarAdjustment : secondaryBarAdjustment),
+            secondaryCornerRadius: CGFloat(secondaryCornerRadius))
     }
 
     private func captureDesktopWallpapers(overwrite: Bool) {

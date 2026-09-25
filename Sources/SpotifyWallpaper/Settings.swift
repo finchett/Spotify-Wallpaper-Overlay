@@ -71,6 +71,13 @@ enum Settings {
     private static let backgroundBrightnessKey = "backgroundBrightness"
     private static let customBackgroundImagePathKey = "customBackgroundImagePath"
     private static let customBackgroundImageNameKey = "customBackgroundImageName"
+    private static let mainBarAdjustmentKey = "mainDisplayBarAdjustmentPixels"
+    private static let secondaryBarAdjustmentKey = "secondaryDisplayBarAdjustmentPixels"
+    private static let secondaryCornerRadiusKey = "secondaryDisplayCornerRadius"
+
+    /// The largest corner radius offered for secondary displays, in points. It matches
+    /// the built-in panel; anything larger is rounder than macOS itself draws.
+    static let maxSecondaryCornerRadius = 22.0
 
     /// Whether the menu-bar icon is shown. Defaults to true on first run.
     static var showMenuBarIcon: Bool {
@@ -230,6 +237,28 @@ enum Settings {
                 newValue,
                 forKey: customBackgroundImageNameKey)
         }
+    }
+
+    /// Extra black-bar height on the main display, in device pixels (may be negative).
+    static var mainDisplayBarAdjustment: Double {
+        get { UserDefaults.standard.double(forKey: mainBarAdjustmentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: mainBarAdjustmentKey) }
+    }
+
+    /// Extra black-bar height on secondary displays, in device pixels (may be negative).
+    static var secondaryDisplayBarAdjustment: Double {
+        get { UserDefaults.standard.double(forKey: secondaryBarAdjustmentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: secondaryBarAdjustmentKey) }
+    }
+
+    /// Corner radius on secondary displays, in points.
+    static var secondaryDisplayCornerRadius: Double {
+        get {
+            UserDefaults.standard.object(forKey: secondaryCornerRadiusKey) == nil
+                ? maxSecondaryCornerRadius
+                : UserDefaults.standard.double(forKey: secondaryCornerRadiusKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: secondaryCornerRadiusKey) }
     }
 
     private static func boolOrTrue(_ key: String) -> Bool {

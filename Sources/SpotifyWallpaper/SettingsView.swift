@@ -70,6 +70,8 @@ struct SettingsView: View {
             missionControlSettings
         case .app:
             appSettings
+        case .advanced:
+            advancedSettings
         }
     }
 
@@ -294,6 +296,56 @@ struct SettingsView: View {
     }
 }
 
+private extension SettingsView {
+    var advancedSettings: some View {
+        SettingsPanel(
+            title: "Advanced",
+            subtitle: "Fine-tune the black desktop frame for each display.",
+            systemImage: "slider.horizontal.3") {
+            VStack(spacing: 13) {
+                SettingSlider(
+                    title: "Main display bar height",
+                    description: "Adds to or trims the black top strip, in pixels.",
+                    valueText: Self.signedPixels(model.mainDisplayBarAdjustment),
+                    value: Binding(
+                        get: { model.mainDisplayBarAdjustment },
+                        set: { model.setMainDisplayBarAdjustment($0) }),
+                    range: -10...10,
+                    step: 1)
+                Divider()
+                SettingSlider(
+                    title: "Secondary display bar height",
+                    description: "Adds to or trims the black top strip, in pixels.",
+                    valueText: Self.signedPixels(model.secondaryDisplayBarAdjustment),
+                    value: Binding(
+                        get: { model.secondaryDisplayBarAdjustment },
+                        set: { model.setSecondaryDisplayBarAdjustment($0) }),
+                    range: -10...10,
+                    step: 1)
+                Divider()
+                SettingSlider(
+                    title: "Secondary display corner radius",
+                    description: "Capped at the built-in display's rounding.",
+                    valueText: "\(Int(model.secondaryDisplayCornerRadius)) pt",
+                    value: Binding(
+                        get: { model.secondaryDisplayCornerRadius },
+                        set: { model.setSecondaryDisplayCornerRadius($0) }),
+                    range: 0...Settings.maxSecondaryCornerRadius,
+                    step: 1)
+                Text("Secondary display settings apply when the frame is shown on secondary displays.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    static func signedPixels(_ value: Double) -> String {
+        let pixels = Int(value)
+        return pixels > 0 ? "+\(pixels) px" : "\(pixels) px"
+    }
+}
+
 private extension SettingsPage {
     var systemImage: String {
         switch self {
@@ -303,6 +355,7 @@ private extension SettingsPage {
         case .playback: return "stop.circle"
         case .missionControl: return "rectangle.3.group"
         case .app: return "gearshape"
+        case .advanced: return "slider.horizontal.3"
         }
     }
 }
@@ -476,6 +529,7 @@ private struct SettingSlider: View {
     let valueText: String
     @Binding var value: Double
     let range: ClosedRange<Double>
+    var step: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -492,7 +546,11 @@ private struct SettingSlider: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            Slider(value: $value, in: range)
+            if let step {
+                Slider(value: $value, in: range, step: step)
+            } else {
+                Slider(value: $value, in: range)
+            }
         }
     }
 }
@@ -589,6 +647,8 @@ private struct DesktopPreview: View {
                 : "The wallpaper workaround is off; only the live overlay is used."
         case .app:
             return "App controls do not change the desktop composition."
+        case .advanced:
+            return "Fine-tunes the black frame to line up with each display's menu bar."
         }
     }
 

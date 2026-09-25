@@ -8,6 +8,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case playback
     case missionControl
     case app
+    case advanced
 
     var id: Self { self }
 
@@ -19,6 +20,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .playback: return "Playback"
         case .missionControl: return "Wallpaper"
         case .app: return "App"
+        case .advanced: return "Advanced"
         }
     }
 }
@@ -48,6 +50,9 @@ final class AppModel: ObservableObject {
     @Published var customBackgroundImageName: String?
     @Published var desktopBackgroundPreview: NSImage?
     @Published var selectedSettingsPage = SettingsPage.display
+    @Published var mainDisplayBarAdjustment = 0.0
+    @Published var secondaryDisplayBarAdjustment = 0.0
+    @Published var secondaryDisplayCornerRadius = Settings.maxSecondaryCornerRadius
 
     var loginAction: () -> Void = {}
     var setLaunchAtLogin: (Bool) -> Void = { _ in }
@@ -67,4 +72,7 @@ final class AppModel: ObservableObject {
     var setBackgroundBlur: (Double) -> Void = { _ in }
     var setBackgroundBrightness: (Double) -> Void = { _ in }
     var chooseBackgroundImageAction: () -> Void = {}
+    var setMainDisplayBarAdjustment: (Double) -> Void = { _ in }
+    var setSecondaryDisplayBarAdjustment: (Double) -> Void = { _ in }
+    var setSecondaryDisplayCornerRadius: (Double) -> Void = { _ in }
 }
